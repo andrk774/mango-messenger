@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mango</string>
+
+    <string name="nav_chats">Чаты</string>
+    <string name="nav_tasks">Задачи</string>
+    <string name="nav_contacts">Контакты</string>
+    <string name="nav_notifications">Уведомления</string>
+    <string name="nav_settings">Настройки</string>
+</resources>

@@ -1,0 +1,27 @@
+# Gradle
+.gradle/
+build/
+!build-logic/
+*/build/
+**/build/
+
+# Local config & secrets
+local.properties
+.env
+*.jks
+*.keystore
+google-services.json
+
+# IDE
+.idea/
+*.iml
+.kotlin/
+.cxx/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs & reports
+*.log
+/reports/

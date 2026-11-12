@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Данные приложения исключены из бэкапа и переноса на новое устройство.
+  Причина: база содержит переписку и неотправленные операции, а токены
+  зашифрованы ключом Android Keystore, который на другом устройстве
+  недоступен — восстановленная копия была бы неработоспособной и при этом
+  содержала бы персональные данные.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="file" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="file" />
+    </device-transfer>
+</data-extraction-rules>

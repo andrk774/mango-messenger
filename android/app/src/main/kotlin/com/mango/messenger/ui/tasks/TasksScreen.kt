@@ -1,0 +1,287 @@
+package com.mango.messenger.ui.tasks
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.mango.core.designsystem.component.EmptyState
+import com.mango.core.designsystem.component.FullScreenLoading
+import com.mango.core.designsystem.component.MangoTopAppBar
+import com.mango.core.designsystem.component.TaskCard
+import com.mango.core.designsystem.component.label
+import com.mango.core.model.Task
+import com.mango.core.model.TaskId
+import com.mango.core.model.TaskScope
+import com.mango.core.model.TaskStatus
+import com.mango.messenger.ui.format.TimeFormatters
+
+/**
+ * Экран списка задач.
+ *
+ * Смена статуса здесь полностью работоспособна и офлайн: изменение
+ * применяется к локальной базе и ставится в очередь синхронизации,
+ * а индикатор на карточке показывает, что оно ещё не доставлено.
+ */
+@Composable
+fun TasksScreen(
+    onTaskClick: (TaskId) -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: TasksViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var newTaskTitle by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is TasksEvent.Error -> snackbarHostState.showSnackbar(event.message)
+                is TasksEvent.Created -> snackbarHostState.showSnackbar("Задача создана")
+            }
+        }
+    }
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            MangoTopAppBar(
+                title = "Задачи",
+                subtitle = when {
+                    state.overdueCount > 0 -> "${state.overdueCount} просрочено"
+                    else -> null
+                },
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { newTaskTitle = "" }) {
+                Icon(Icons.Default.Add, contentDescription = "Создать задачу")
+            }
+        },
+    ) { padding ->
+        Column(Modifier.padding(padding)) {
+            ScopeTabs(
+                selected = state.scope,
+                onSelect = viewModel::onScopeChange,
+            )
+
+            FilterRow(
+                includeCompleted = state.includeCompleted,
+                onIncludeCompletedChange = viewModel::onIncludeCompletedChange,
+            )
+
+            when {
+                state.isLoading -> FullScreenLoading()
+
+                state.isEmpty -> EmptyState(
+                    icon = Icons.Outlined.Checklist,
+                    title = when (state.scope) {
+                        TaskScope.MINE -> "У вас нет активных задач"
+                        TaskScope.TEAM -> "В командных чатах задач нет"
+                        TaskScope.FROM_CHATS -> "Задач из переписок пока нет"
+                    },
+                    description = "Задачу можно создать здесь или прямо из сообщения в чате.",
+                    actionText = "Создать задачу",
+                    onAction = { newTaskTitle = "" },
+                )
+
+                else -> TaskList(
+                    tasks = state.tasks,
+                    onTaskClick = onTaskClick,
+                    onStatusChange = viewModel::onStatusChange,
+                )
+            }
+        }
+    }
+
+    newTaskTitle?.let { initial ->
+        NewTaskDialog(
+            initialTitle = initial,
+            onDismiss = { newTaskTitle = null },
+            onConfirm = { title ->
+                viewModel.onCreateTask(title)
+                newTaskTitle = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun ScopeTabs(selected: TaskScope, onSelect: (TaskScope) -> Unit) {
+    val scopes = TaskScope.entries
+    TabRow(selectedTabIndex = scopes.indexOf(selected)) {
+        scopes.forEach { scope ->
+            Tab(
+                selected = scope == selected,
+                onClick = { onSelect(scope) },
+                text = {
+                    Text(
+                        text = when (scope) {
+                            TaskScope.MINE -> "Мои"
+                            TaskScope.TEAM -> "Команда"
+                            TaskScope.FROM_CHATS -> "Из чатов"
+                        },
+                        maxLines = 1,
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilterRow(
+    includeCompleted: Boolean,
+    onIncludeCompletedChange: (Boolean) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            FilterChip(
+                selected = includeCompleted,
+                onClick = { onIncludeCompletedChange(!includeCompleted) },
+                label = { Text("Показывать выполненные") },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TaskList(
+    tasks: List<Task>,
+    onTaskClick: (TaskId) -> Unit,
+    onStatusChange: (TaskId, TaskStatus) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            start = 16.dp, end = 16.dp, bottom = 88.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(items = tasks, key = { it.id.value }) { task ->
+            Column {
+                TaskCard(
+                    title = task.title,
+                    status = task.status,
+                    priority = task.priority,
+                    dueLabel = task.dueAt?.let { TimeFormatters.dueDate(it) },
+                    isOverdue = task.isOverdue,
+                    assigneeInitials = task.assignees.map { it.initials },
+                    conversationTitle = task.conversationTitle,
+                    commentCount = task.commentCount,
+                    attachmentCount = task.attachments.size,
+                    subtaskCompleted = task.completedSubtaskCount,
+                    subtaskTotal = task.subtaskCount,
+                    syncStatus = task.syncStatus,
+                    onClick = { onTaskClick(task.id) },
+                )
+                StatusQuickActions(
+                    current = task.status,
+                    onSelect = { onStatusChange(task.id, it) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Быстрая смена статуса прямо из списка.
+ *
+ * Это основной путь использования: статус меняют чаще, чем открывают
+ * карточку задачи, поэтому действие вынесено на один тап.
+ */
+@Composable
+private fun StatusQuickActions(
+    current: TaskStatus,
+    onSelect: (TaskStatus) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(TaskStatus.entries.filter { it != current }) { status ->
+            FilterChip(
+                selected = false,
+                onClick = { onSelect(status) },
+                label = {
+                    Text(
+                        text = status.label(),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun NewTaskDialog(
+    initialTitle: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var title by remember { mutableStateOf(initialTitle) }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Новая задача") },
+        text = {
+            com.mango.core.designsystem.component.MangoTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = "Название",
+                placeholder = "Что нужно сделать?",
+                singleLine = false,
+            )
+        },
+        confirmButton = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                com.mango.core.designsystem.component.MangoTextButton(
+                    text = "Отмена",
+                    onClick = onDismiss,
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.width(8.dp))
+                com.mango.core.designsystem.component.MangoPrimaryButton(
+                    text = "Создать",
+                    onClick = { onConfirm(title) },
+                    enabled = title.isNotBlank(),
+                )
+            }
+        },
+    )
+}

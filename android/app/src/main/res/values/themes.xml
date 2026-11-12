@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Тема приложения задаётся в Compose (MangoTheme).
+         Эта тема нужна только до первого кадра Compose, поэтому содержит
+         минимум: прозрачные системные панели и фон под splash. -->
+    <style name="Theme.Mango.Starting" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/mango_splash_background</item>
+    </style>
+</resources>

@@ -1,0 +1,1115 @@
+openapi: 3.1.0
+
+info:
+  title: Mango Messenger API
+  version: 0.1.0-draft
+  description: |
+    API мессенджера Mango с интегрированным управлением задачами.
+
+    **Статус: черновик контракта (Этап 1).** Реализация — Этап 3–6.
+    Документ описывает согласованный контракт, по которому строится клиент;
+    расхождения между этим файлом и реализацией будут проверяться
+    контрактным тестом.
+
+    ## Идемпотентность
+
+    Все модифицирующие запросы принимают заголовок `Idempotency-Key`
+    со значением `clientOpId` (UUIDv7), сгенерированным на устройстве
+    до отправки. Повторный запрос с тем же ключом возвращает **ранее
+    сохранённый результат**, а не применяет операцию заново.
+
+    Это не опция: клиент повторяет операции при неизвестном исходе
+    (таймаут, обрыв, убийство процесса), и без ключа идемпотентности
+    это порождало бы дубликаты сообщений.
+
+    ## Синхронизация
+
+    WebSocket — транспорт ускорения, а не источник истины. После каждого
+    подключения клиент обязан сверяться через `GET /v1/sync`.
+    См. `docs/architecture/sync-model.md`.
+
+servers:
+  - url: http://localhost:8080
+    description: Локальная разработка
+  - url: https://api.mango.example
+    description: Промышленная среда (ещё не развёрнута)
+
+tags:
+  - name: auth
+  - name: users
+  - name: conversations
+  - name: messages
+  - name: tasks
+  - name: attachments
+  - name: sync
+  - name: notifications
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ─────────────────────────── auth ───────────────────────────
+
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      security: []
+      summary: Регистрация по email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, displayName]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 10, maxLength: 128 }
+                displayName: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        '201':
+          description: Пользователь создан, отправлено письмо подтверждения
+        '409':
+          description: |
+            Email занят.
+
+            ВНИМАНИЕ: ответ намеренно неотличим от успешного по времени
+            выполнения, чтобы эндпоинт нельзя было использовать для
+            перечисления зарегистрированных адресов.
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /v1/auth/verify-email:
+    post:
+      tags: [auth]
+      security: []
+      summary: Подтверждение email по токену из письма
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200': { description: Email подтверждён }
+        '400': { description: Токен недействителен или истёк }
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Вход
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, device]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+                device: { $ref: '#/components/schemas/DeviceInfo' }
+      responses:
+        '200':
+          description: Выдана пара токенов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401':
+          description: |
+            Неверные учётные данные. Ответ идентичен для несуществующего
+            email и неверного пароля.
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      summary: Обновление access token с ротацией refresh token
+      description: |
+        Refresh token **ротируется**: старый становится недействительным.
+        Повторное использование уже использованного refresh token
+        трактуется как компрометация — все сессии пользователя отзываются.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+          description: Новая пара токенов
+        '401': { description: Токен недействителен; требуется повторный вход }
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Выход из текущей сессии
+      responses:
+        '204': { description: Сессия отозвана }
+
+  /v1/auth/password/forgot:
+    post:
+      tags: [auth]
+      security: []
+      summary: Запрос восстановления доступа
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '202':
+          description: |
+            Если адрес зарегистрирован, письмо отправлено. Ответ
+            одинаков в любом случае — иначе эндпоинт перечисляет адреса.
+
+  /v1/auth/password/reset:
+    post:
+      tags: [auth]
+      security: []
+      summary: Установка нового пароля по токену
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword]
+              properties:
+                token: { type: string }
+                newPassword: { type: string, minLength: 10 }
+      responses:
+        '200': { description: Пароль изменён, все сессии отозваны }
+        '400': { description: Токен недействителен или истёк }
+
+  /v1/auth/sessions:
+    get:
+      tags: [auth]
+      summary: Активные сессии и устройства
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Session' }
+          description: Список сессий
+
+  /v1/auth/sessions/{sessionId}:
+    delete:
+      tags: [auth]
+      summary: Отзыв сессии
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Сессия отозвана }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ─────────────────────────── users ───────────────────────────
+
+  /v1/users/me:
+    get:
+      tags: [users]
+      summary: Профиль текущего пользователя
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrentUser' }
+          description: Профиль
+    patch:
+      tags: [users]
+      summary: Изменение профиля
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string, maxLength: 64 }
+                username: { type: string, pattern: '^[a-zA-Z0-9_]{3,32}$' }
+                bio: { type: string, maxLength: 280 }
+                privacy: { $ref: '#/components/schemas/PrivacySettings' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrentUser' }
+          description: Обновлённый профиль
+        '409': { description: username занят }
+
+  /v1/users/search:
+    get:
+      tags: [users]
+      summary: Поиск пользователей
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 50 } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+          description: Найденные пользователи
+
+  /v1/users/me/devices/push:
+    put:
+      tags: [users]
+      summary: Регистрация push-токена устройства
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, token]
+              properties:
+                provider: { type: string, enum: [FCM, HMS, DEV] }
+                token: { type: string }
+      responses:
+        '204': { description: Токен сохранён }
+
+  # ───────────────────── conversations ─────────────────────
+
+  /v1/conversations:
+    get:
+      tags: [conversations]
+      summary: Список чатов
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 100 } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Conversation' }
+                  nextCursor: { type: string, nullable: true }
+          description: Страница списка чатов
+    post:
+      tags: [conversations]
+      summary: Создание чата
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, memberIds]
+              properties:
+                type: { type: string, enum: [DIRECT, GROUP] }
+                memberIds:
+                  type: array
+                  items: { type: string, format: uuid }
+                title: { type: string, maxLength: 128 }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+          description: |
+            Чат создан. Для DIRECT при существующем чате возвращается
+            существующий — повторное открытие переписки не должно
+            создавать второй личный чат.
+
+  /v1/conversations/{conversationId}/members/{userId}:
+    delete:
+      tags: [conversations]
+      summary: Удаление участника
+      description: |
+        Требует роль OWNER или ADMIN. Полномочия проверяются на сервере;
+        отсутствие прав даёт 403 независимо от интерфейса клиента.
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Участник удалён }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/conversations/{conversationId}/read:
+    put:
+      tags: [conversations]
+      summary: Отметка о прочтении
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seq]
+              properties:
+                seq: { type: integer, format: int64 }
+      responses:
+        '204':
+          description: |
+            Отметка применена. Значение только возрастает: запоздавший
+            запрос с меньшим seq игнорируется.
+
+  # ─────────────────────── messages ───────────────────────
+
+  /v1/conversations/{conversationId}/messages:
+    get:
+      tags: [messages]
+      summary: История сообщений
+      description: |
+        Пагинация по `seq`, без OFFSET. `beforeSeq` — страница назад
+        (основной режим), `afterSeq` — догрузка разрыва вперёд.
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: beforeSeq, in: query, schema: { type: integer, format: int64 } }
+        - { name: afterSeq, in: query, schema: { type: integer, format: int64 } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 100 } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Message' }
+          description: Страница истории
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [messages]
+      summary: Отправка сообщения
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientMsgId, type]
+              properties:
+                clientMsgId:
+                  type: string
+                  description: UUIDv7, сгенерированный клиентом. Ключ дедупликации.
+                type: { type: string, enum: [TEXT, IMAGE, VIDEO, VOICE, FILE] }
+                body: { type: string, maxLength: 8192 }
+                replyToId: { type: string, format: uuid, nullable: true }
+                attachmentIds:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+          description: |
+            Сообщение сохранено и получило `seq`. При повторе с тем же
+            `clientMsgId` возвращается уже созданное сообщение со статусом 200.
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+          description: Операция уже была применена ранее (идемпотентный повтор)
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/messages/{messageId}:
+    patch:
+      tags: [messages]
+      summary: Редактирование сообщения
+      parameters:
+        - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 8192 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+          description: Сообщение изменено
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [messages]
+      summary: Удаление сообщения
+      parameters:
+        - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: forEveryone, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '204':
+          description: |
+            Сообщение помечено удалённым. Строка сохраняется: на неё могут
+            ссылаться ответы и задачи. Задачи, созданные из этого сообщения,
+            получают признак недоступности источника, но сохраняют снапшот текста.
+
+  /v1/messages/{messageId}/reactions:
+    put:
+      tags: [messages]
+      summary: Переключение реакции
+      parameters:
+        - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [emoji, add]
+              properties:
+                emoji: { type: string, maxLength: 8 }
+                add: { type: boolean }
+      responses:
+        '200': { description: Реакция применена }
+
+  /v1/messages/{messageId}/to-task:
+    post:
+      tags: [tasks, messages]
+      summary: Создание задачи из сообщения
+      description: |
+        Ключевая возможность продукта. Сервер сохраняет ссылку на сообщение
+        и снапшот его текста, поэтому последующее удаление сообщения
+        не лишает задачу контекста.
+      parameters:
+        - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [taskId, title]
+              properties:
+                taskId: { type: string, format: uuid, description: UUIDv7 от клиента }
+                title: { type: string, maxLength: 256 }
+                description: { type: string, maxLength: 8192 }
+                priority: { type: string, enum: [LOW, MEDIUM, HIGH, URGENT] }
+                dueAt: { type: string, format: date-time, nullable: true }
+                assigneeIds:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+          description: Задача создана
+
+  # ───────────────────────── tasks ─────────────────────────
+
+  /v1/tasks:
+    get:
+      tags: [tasks]
+      summary: Список задач
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [mine, team, chat], default: mine } }
+        - { name: status, in: query, schema: { type: array, items: { type: string, enum: [TODO, IN_PROGRESS, REVIEW, DONE, CANCELLED] } } }
+        - { name: assigneeId, in: query, schema: { type: string, format: uuid } }
+        - { name: conversationId, in: query, schema: { type: string, format: uuid } }
+        - { name: dueBefore, in: query, schema: { type: string, format: date-time } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Task' }
+                  nextCursor: { type: string, nullable: true }
+          description: Страница задач
+    post:
+      tags: [tasks]
+      summary: Создание задачи
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTaskRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+          description: Задача создана
+
+  /v1/tasks/{taskId}:
+    patch:
+      tags: [tasks]
+      summary: Частичное изменение задачи с разрешением конфликтов
+      description: |
+        Отправляются **только изменённые поля** вместе с `baseVersion`
+        и метками времени изменения по каждому полю.
+
+        - `baseVersion == version` — изменения применяются, `version++`.
+        - `baseVersion < version` — сервер применяет LWW по каждому полю
+          и возвращает 200 с итоговым объектом и списком `conflicts`.
+          Клиент принимает серверный объект как истину.
+
+        Подробности: `docs/architecture/sync-model.md`, раздел 6.
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseVersion, changedFields]
+              properties:
+                baseVersion: { type: integer, format: int64 }
+                changedFields:
+                  type: object
+                  additionalProperties: true
+                  example: { status: DONE, priority: HIGH }
+                fieldTimestamps:
+                  type: object
+                  additionalProperties: { type: integer, format: int64 }
+                  description: Метки времени локального изменения по полям, epoch millis
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Task'
+                  - type: object
+                    properties:
+                      conflicts:
+                        type: array
+                        items: { type: string }
+                        description: Поля, где победила серверная версия
+          description: Актуальное состояние задачи
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Задача не найдена или удалена }
+
+  /v1/tasks/{taskId}/assignees:
+    post:
+      tags: [tasks]
+      summary: Изменение набора исполнителей
+      description: |
+        Передаются списки добавления и удаления, а не итоговый набор.
+        Сервер сливает их как OR-Set, поэтому два устройства, назначившие
+        разных людей, не затирают друг друга.
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                add: { type: array, items: { type: string, format: uuid } }
+                remove: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+          description: Итоговый набор исполнителей
+
+  /v1/tasks/{taskId}/events:
+    get:
+      tags: [tasks]
+      summary: История изменений задачи
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TaskEvent' }
+          description: |
+            Полная история. Содержит в том числе изменения, проигравшие
+            при разрешении конфликта, — это делает любой конфликт разбираемым.
+
+  # ─────────────────────── attachments ───────────────────────
+
+  /v1/attachments/upload-ticket:
+    post:
+      tags: [attachments]
+      summary: Получение presigned URL для загрузки
+      description: |
+        Файл загружается напрямую в объектное хранилище, минуя backend.
+        Ограничение размера задаётся в presigned-политике, а не только
+        на клиенте.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mimeType, sizeBytes, checksumSha256]
+              properties:
+                mimeType: { type: string }
+                sizeBytes: { type: integer, format: int64, maximum: 104857600 }
+                checksumSha256: { type: string }
+                fileName: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attachmentId: { type: string, format: uuid }
+                  uploadUrl: { type: string, format: uri }
+                  expiresAt: { type: string, format: date-time }
+          description: Разрешение на загрузку
+        '413': { description: Превышен допустимый размер }
+        '415': { description: Недопустимый тип файла }
+
+  /v1/attachments/{attachmentId}/url:
+    get:
+      tags: [attachments]
+      summary: Получение временной ссылки на скачивание
+      description: |
+        Ссылка выдаётся только после проверки прав доступа и имеет
+        короткий срок жизни. Прямой доступ к объектному хранилищу закрыт.
+      parameters:
+        - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string, format: uri }
+                  expiresAt: { type: string, format: date-time }
+          description: Временная ссылка
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Файл ещё не прошёл проверку безопасности }
+
+  # ───────────────────────── sync ─────────────────────────
+
+  /v1/sync:
+    get:
+      tags: [sync]
+      summary: Догонка пропущенных событий
+      description: |
+        Основной механизм надёжности. Вызывается после каждого
+        переподключения WebSocket, а также при обнаружении разрыва
+        в нумерации событий.
+      parameters:
+        - name: since
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+          description: Последний применённый eventId
+        - { name: limit, in: query, schema: { type: integer, default: 500, maximum: 1000 } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/SyncEvent' }
+                  lastEventId: { type: integer, format: int64 }
+                  hasMore: { type: boolean }
+          description: Страница событий
+        '410':
+          description: |
+            Курсор устарел — журнал усечён. Клиент обязан перезагрузить
+            указанные области (`scopes`), но НЕ всю базу целиком.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resetScopes:
+                    type: array
+                    items: { type: string }
+
+  /v1/sync/bootstrap:
+    get:
+      tags: [sync]
+      summary: Первичная загрузка после входа
+      responses:
+        '200':
+          description: Чаты, участники и последние сообщения каждого чата
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversations:
+                    type: array
+                    items: { $ref: '#/components/schemas/Conversation' }
+                  lastEventId: { type: integer, format: int64 }
+
+  # ─────────────────── notifications ───────────────────
+
+  /v1/notifications:
+    get:
+      tags: [notifications]
+      summary: Лента уведомлений
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  nextCursor: { type: string, nullable: true }
+          description: Страница уведомлений
+
+  /v1/health:
+    get:
+      tags: [sync]
+      security: []
+      summary: Проверка живости
+      responses:
+        '200': { description: Сервис отвечает }
+
+  /v1/health/ready:
+    get:
+      tags: [sync]
+      security: []
+      summary: Готовность принимать трафик
+      responses:
+        '200': { description: БД и Redis доступны }
+        '503': { description: Зависимости недоступны }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+      description: |
+        clientOpId (UUIDv7), сгенерированный устройством ДО отправки.
+        Повтор с тем же ключом возвращает ранее сохранённый результат.
+
+  responses:
+    Forbidden:
+      description: |
+        Нет прав на операцию. Возвращается в том числе когда объект
+        существует, но пользователь не является участником чата —
+        ответ не отличается от «не найдено», чтобы не раскрывать
+        существование чужих объектов.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Данные не прошли валидацию
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  fieldErrors:
+                    type: object
+                    additionalProperties: { type: string }
+    RateLimited:
+      description: Превышен лимит запросов
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Через сколько секунд повторять. Приоритетнее клиентской формулы backoff.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: FORBIDDEN }
+        message: { type: string }
+        traceId: { type: string, description: Для корреляции с логами сервера }
+
+    DeviceInfo:
+      type: object
+      required: [platform, model, appVersion]
+      properties:
+        platform: { type: string, enum: [ANDROID, IOS, WEB] }
+        model: { type: string }
+        appVersion: { type: string }
+
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken, accessExpiresAt]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        accessExpiresAt: { type: string, format: date-time }
+
+    Session:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        device: { $ref: '#/components/schemas/DeviceInfo' }
+        lastActiveAt: { type: string, format: date-time }
+        isCurrent: { type: boolean }
+
+    User:
+      type: object
+      required: [id, username, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        avatarUrl: { type: string, nullable: true }
+        bio: { type: string, nullable: true }
+        presence: { type: string, enum: [ONLINE, OFFLINE, AWAY, DO_NOT_DISTURB] }
+        lastSeenAt: { type: string, format: date-time, nullable: true }
+
+    CurrentUser:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          properties:
+            email: { type: string, format: email }
+            emailVerified: { type: boolean }
+            privacy: { $ref: '#/components/schemas/PrivacySettings' }
+
+    PrivacySettings:
+      type: object
+      properties:
+        lastSeenVisibility: { type: string, enum: [EVERYONE, CONTACTS, NOBODY] }
+        avatarVisibility: { type: string, enum: [EVERYONE, CONTACTS, NOBODY] }
+        readReceiptsEnabled: { type: boolean }
+        typingIndicatorEnabled: { type: boolean }
+
+    Conversation:
+      type: object
+      required: [id, type, title]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [DIRECT, GROUP] }
+        title: { type: string }
+        avatarUrl: { type: string, nullable: true }
+        memberCount: { type: integer }
+        myRole: { type: string, enum: [OWNER, ADMIN, MEMBER] }
+        lastEventSeq: { type: integer, format: int64 }
+        lastReadSeq: { type: integer, format: int64 }
+        unreadCount: { type: integer }
+        mutedUntil: { type: string, format: date-time, nullable: true }
+        lastMessage:
+          oneOf:
+            - $ref: '#/components/schemas/Message'
+            - type: 'null'
+
+    Message:
+      type: object
+      required: [id, conversationId, senderId, clientMsgId, seq, type, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        senderId: { type: string, format: uuid }
+        clientMsgId: { type: string }
+        seq:
+          type: integer
+          format: int64
+          description: Порядковый номер внутри чата. Источник истины для порядка.
+        type: { type: string, enum: [TEXT, IMAGE, VIDEO, VOICE, FILE, SYSTEM] }
+        body: { type: string, nullable: true }
+        replyTo:
+          oneOf:
+            - $ref: '#/components/schemas/MessageReference'
+            - type: 'null'
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/Attachment' }
+        reactions:
+          type: array
+          items:
+            type: object
+            properties:
+              emoji: { type: string }
+              count: { type: integer }
+              reactedByMe: { type: boolean }
+        editedAt: { type: string, format: date-time, nullable: true }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        pinnedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    MessageReference:
+      type: object
+      description: |
+        Содержит снапшот автора и текста: исходное сообщение может быть
+        удалено, и тогда ответ всё равно должен остаться читаемым.
+      properties:
+        messageId: { type: string, format: uuid }
+        senderName: { type: string }
+        textSnapshot: { type: string, nullable: true }
+        isUnavailable: { type: boolean }
+
+    Attachment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        mimeType: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        fileName: { type: string }
+        width: { type: integer, nullable: true }
+        height: { type: integer, nullable: true }
+        durationMs: { type: integer, nullable: true }
+        scanStatus: { type: string, enum: [PENDING, CLEAN, REJECTED] }
+
+    CreateTaskRequest:
+      type: object
+      required: [taskId, title]
+      properties:
+        taskId: { type: string, format: uuid, description: UUIDv7 от клиента }
+        title: { type: string, minLength: 1, maxLength: 256 }
+        description: { type: string, maxLength: 8192 }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH, URGENT], default: MEDIUM }
+        dueAt: { type: string, format: date-time, nullable: true }
+        remindAt: { type: string, format: date-time, nullable: true }
+        conversationId: { type: string, format: uuid, nullable: true }
+        parentTaskId: { type: string, format: uuid, nullable: true }
+        assigneeIds:
+          type: array
+          items: { type: string, format: uuid }
+
+    Task:
+      type: object
+      required: [id, title, status, priority, version, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [TODO, IN_PROGRESS, REVIEW, DONE, CANCELLED] }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH, URGENT] }
+        createdBy: { type: string, format: uuid }
+        assignees:
+          type: array
+          items: { $ref: '#/components/schemas/User' }
+        conversationId: { type: string, format: uuid, nullable: true }
+        source:
+          oneOf:
+            - $ref: '#/components/schemas/TaskSource'
+            - type: 'null'
+        parentTaskId: { type: string, format: uuid, nullable: true }
+        subtaskCount: { type: integer }
+        completedSubtaskCount: { type: integer }
+        commentCount: { type: integer }
+        dueAt: { type: string, format: date-time, nullable: true }
+        remindAt: { type: string, format: date-time, nullable: true }
+        version:
+          type: integer
+          format: int64
+          description: Передаётся обратно как baseVersion при PATCH
+        completedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    TaskSource:
+      type: object
+      description: |
+        Связь с исходным сообщением. Снапшот текста сохраняется навсегда:
+        удаление сообщения выставляет isSourceUnavailable, но не стирает текст.
+      properties:
+        messageId: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        senderName: { type: string }
+        textSnapshot: { type: string, nullable: true }
+        isSourceUnavailable: { type: boolean }
+
+    TaskEvent:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        taskId: { type: string, format: uuid }
+        actorId: { type: string, format: uuid, nullable: true }
+        type:
+          type: string
+          enum: [CREATED, STATUS_CHANGED, PRIORITY_CHANGED, ASSIGNED, UNASSIGNED,
+                 DUE_DATE_CHANGED, TITLE_CHANGED, DESCRIPTION_CHANGED,
+                 COMMENT_ADDED, ATTACHMENT_ADDED, DELETED, RESTORED]
+        field: { type: string, nullable: true }
+        oldValue: { nullable: true }
+        newValue: { nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    SyncEvent:
+      type: object
+      required: [id, type, scope]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Монотонно возрастает в пределах пользователя. Основа курсора.
+        type: { type: string, example: MESSAGE_CREATED }
+        scope: { type: string, enum: [CONVERSATION, TASK, PROFILE] }
+        scopeId: { type: string, format: uuid, nullable: true }
+        payload: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [NEW_MESSAGE, MENTION, TASK_ASSIGNED, TASK_UPDATED,
+                 TASK_COMMENT, TASK_REMINDER, CONVERSATION_EVENT]
+        title: { type: string }
+        body: { type: string, nullable: true }
+        conversationId: { type: string, format: uuid, nullable: true }
+        taskId: { type: string, format: uuid, nullable: true }
+        readAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
