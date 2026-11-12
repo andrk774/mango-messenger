@@ -11,6 +11,7 @@ import com.mango.core.model.TaskId
 import com.mango.core.model.TaskScope
 import com.mango.core.model.TaskStatus
 import com.mango.core.model.User
+import com.mango.core.model.UserId
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -33,6 +34,28 @@ interface ConversationRepository {
     suspend fun saveDraft(id: ConversationId, draft: String?): Outcome<Unit>
     suspend fun markRead(id: ConversationId, seq: Long): Outcome<Unit>
     suspend fun setMuted(id: ConversationId, mutedUntilMillis: Long?): Outcome<Unit>
+
+    /**
+     * Загружает список чатов с сервера в локальную базу.
+     *
+     * Интерфейс при этом не ждёт ответа: он подписан на Room и обновится
+     * сам, когда данные приедут. Поэтому метод возвращает только исход
+     * загрузки, а не сами чаты.
+     */
+    suspend fun refresh(): Outcome<Unit>
+
+    /**
+     * Открывает личную переписку с пользователем.
+     *
+     * Повторный вызов возвращает тот же чат: сервер не создаёт второй
+     * личный чат между теми же людьми.
+     */
+    suspend fun openDirect(userId: UserId): Outcome<ConversationId>
+
+    suspend fun loadMembers(id: ConversationId): Outcome<Unit>
+
+    /** Поиск людей для начала переписки. */
+    suspend fun searchPeople(query: String): Outcome<List<User>>
 }
 
 interface MessageRepository {
@@ -56,6 +79,19 @@ interface MessageRepository {
     suspend fun delete(id: MessageId, forEveryone: Boolean): Outcome<Unit>
     suspend fun toggleReaction(id: MessageId, emoji: String): Outcome<Unit>
     suspend fun search(query: String, conversationId: ConversationId? = null): Outcome<List<Message>>
+
+    /**
+     * Догружает историю переписки с сервера.
+     *
+     * @param beforeSeq граница прокрутки: загружаются сообщения с меньшим
+     *   номером. `null` — последняя страница.
+     * @return сколько сообщений записано локально.
+     */
+    suspend fun loadHistory(
+        conversationId: ConversationId,
+        beforeSeq: Long? = null,
+        limit: Int = 50,
+    ): Outcome<Int>
 }
 
 interface TaskRepository {

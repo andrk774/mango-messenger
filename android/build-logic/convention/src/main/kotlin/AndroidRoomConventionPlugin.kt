@@ -22,8 +22,11 @@ class AndroidRoomConventionPlugin : Plugin<Project> {
         }
 
         dependencies {
-            add("implementation", libs.findLibrary("room-runtime").get())
-            add("implementation", libs.findLibrary("room-ktx").get())
+            // api, а не implementation: DAO и сущности Room входят
+            // в публичную поверхность :core:database, и модулям-потребителям
+            // нужны его типы — в частности withTransaction.
+            add("api", libs.findLibrary("room-runtime").get())
+            add("api", libs.findLibrary("room-ktx").get())
             add("ksp", libs.findLibrary("room-compiler").get())
             add("testImplementation", libs.findLibrary("room-testing").get())
         }

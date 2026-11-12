@@ -20,6 +20,9 @@ dependencies {
     api(projects.core.model)
     api(projects.core.common)
     api(libs.junit4)
+    // kotlin.test даёт assertIs и типизированные проверки,
+    // которых нет в JUnit 4.
+    api(libs.kotlin.test)
     api(libs.mockk)
     api(libs.turbine)
     api(libs.kotlinx.coroutines.test)

@@ -15,6 +15,7 @@ dependencies {
     api(projects.core.model)
     api(projects.core.common)
     api(projects.core.database)
+    api(projects.core.network)
     implementation(libs.room.ktx)
     implementation(projects.core.datastore)
     implementation(libs.kotlinx.serialization.json)

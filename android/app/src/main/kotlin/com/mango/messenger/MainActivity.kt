@@ -21,15 +21,19 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mango.core.datastore.SettingsStore
 import com.mango.core.datastore.ThemeMode
 import com.mango.core.datastore.UserSettings
+import com.mango.core.designsystem.component.FullScreenLoading
 import com.mango.core.designsystem.theme.MangoTheme
 import com.mango.messenger.navigation.Routes
 import com.mango.messenger.navigation.topLevelDestinations
+import com.mango.messenger.ui.auth.AuthScreen
 import com.mango.messenger.ui.chats.ChatsScreen
+import com.mango.messenger.ui.conversation.ConversationScreen
 import com.mango.messenger.ui.misc.ContactsScreen
 import com.mango.messenger.ui.misc.NotificationsScreen
 import com.mango.messenger.ui.settings.SettingsScreen
@@ -54,6 +58,9 @@ class MainActivity : ComponentActivity() {
             val settings by settingsStore.settings
                 .collectAsStateWithLifecycle(initialValue = UserSettings())
 
+            val mainViewModel: MainViewModel = hiltViewModel()
+            val appState by mainViewModel.appState.collectAsStateWithLifecycle()
+
             MangoTheme(
                 darkTheme = when (settings.themeMode) {
                     ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
@@ -63,7 +70,18 @@ class MainActivity : ComponentActivity() {
                 dynamicColor = settings.dynamicColorEnabled,
             ) {
                 Surface(Modifier.fillMaxSize()) {
-                    MangoApp()
+                    when (appState) {
+                        // Пока сессия восстанавливается, экран входа
+                        // показывать нельзя: он мелькал бы при каждом
+                        // запуске у вошедшего пользователя.
+                        AppState.Loading -> FullScreenLoading()
+
+                        AppState.SignedOut -> AuthScreen(
+                            onAuthenticated = mainViewModel::onSignedIn,
+                        )
+
+                        AppState.SignedIn -> MangoApp(onSignOut = mainViewModel::signOut)
+                    }
                 }
             }
         }
@@ -71,7 +89,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MangoApp() {
+private fun MangoApp(onSignOut: () -> Unit) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
@@ -118,6 +136,9 @@ private fun MangoApp() {
                     onConversationClick = { conversation ->
                         navController.navigate(Routes.conversation(conversation.id.value))
                     },
+                    onOpenConversationById = { id ->
+                        navController.navigate(Routes.conversation(id))
+                    },
                     modifier = Modifier.padding(padding),
                 )
             }
@@ -140,13 +161,7 @@ private fun MangoApp() {
             }
 
             composable(Routes.CONVERSATION) {
-                NotImplementedScreen(
-                    title = "Переписка",
-                    stage = "Этап 4 — Messenger MVP",
-                    details = "Экран сообщений, композер, ответы, реакции и " +
-                        "синхронизация по WebSocket.",
-                    onNavigateBack = navController::popBackStack,
-                )
+                ConversationScreen(onNavigateBack = navController::popBackStack)
             }
             composable(Routes.TASK_DETAILS) {
                 NotImplementedScreen(

@@ -53,35 +53,53 @@ paths:
 
   /v1/auth/register:
     post:
+      x-implemented: true
       tags: [auth]
       security: []
       summary: Регистрация по email
+      description: |
+        Ответ НЕ зависит от того, свободен ли адрес: и для нового, и для
+        уже зарегистрированного возвращается `202`. Иначе эндпоинт позволял
+        бы проверять по списку, кто пользуется сервисом.
+
+        Владельцу занятого адреса уходит письмо о попытке регистрации —
+        так он узнаёт о происходящем, а посторонний не узнаёт ничего.
+
+        Имя пользователя (`username`) — исключение: оно публично и участвует
+        в поиске, поэтому о его занятости сообщается прямо через `409`.
+
+        См. ADR-0014.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email, password, displayName]
+              required: [email, password, displayName, username]
               properties:
                 email: { type: string, format: email }
                 password: { type: string, minLength: 10, maxLength: 128 }
                 displayName: { type: string, minLength: 1, maxLength: 64 }
+                username: { type: string, pattern: '^[A-Za-z0-9_]{3,32}$' }
       responses:
-        '201':
-          description: Пользователь создан, отправлено письмо подтверждения
-        '409':
+        '202':
           description: |
-            Email занят.
-
-            ВНИМАНИЕ: ответ намеренно неотличим от успешного по времени
-            выполнения, чтобы эндпоинт нельзя было использовать для
-            перечисления зарегистрированных адресов.
+            Запрос принят. Если адрес был свободен, на него отправлено
+            письмо с кодом подтверждения.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted' }
+        '409':
+          description: Имя пользователя занято
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '422': { $ref: '#/components/responses/ValidationError' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
   /v1/auth/verify-email:
     post:
+      x-implemented: true
       tags: [auth]
       security: []
       summary: Подтверждение email по токену из письма
@@ -100,6 +118,7 @@ paths:
 
   /v1/auth/login:
     post:
+      x-implemented: true
       tags: [auth]
       security: []
       summary: Вход
@@ -123,11 +142,21 @@ paths:
         '401':
           description: |
             Неверные учётные данные. Ответ идентичен для несуществующего
-            email и неверного пароля.
+            email и неверного пароля — в том числе по времени выполнения:
+            для неизвестного адреса пароль всё равно проверяется против
+            эталонного хеша.
+        '403':
+          description: |
+            Адрес электронной почты не подтверждён.
+
+            Проверка выполняется ПОСЛЕ проверки пароля, поэтому этот ответ
+            не сообщает о существовании учётной записи тому, кто пароля
+            не знает.
         '429': { $ref: '#/components/responses/RateLimited' }
 
   /v1/auth/refresh:
     post:
+      x-implemented: true
       tags: [auth]
       security: []
       summary: Обновление access token с ротацией refresh token
@@ -154,6 +183,7 @@ paths:
 
   /v1/auth/logout:
     post:
+      x-implemented: true
       tags: [auth]
       summary: Выход из текущей сессии
       responses:
@@ -161,6 +191,7 @@ paths:
 
   /v1/auth/password/forgot:
     post:
+      x-implemented: true
       tags: [auth]
       security: []
       summary: Запрос восстановления доступа
@@ -181,6 +212,7 @@ paths:
 
   /v1/auth/password/reset:
     post:
+      x-implemented: true
       tags: [auth]
       security: []
       summary: Установка нового пароля по токену
@@ -200,6 +232,7 @@ paths:
 
   /v1/auth/sessions:
     get:
+      x-implemented: true
       tags: [auth]
       summary: Активные сессии и устройства
       responses:
@@ -213,6 +246,7 @@ paths:
 
   /v1/auth/sessions/{sessionId}:
     delete:
+      x-implemented: true
       tags: [auth]
       summary: Отзыв сессии
       parameters:
@@ -225,6 +259,7 @@ paths:
 
   /v1/users/me:
     get:
+      x-implemented: true
       tags: [users]
       summary: Профиль текущего пользователя
       responses:
@@ -256,6 +291,7 @@ paths:
 
   /v1/users/search:
     get:
+      x-implemented: true
       tags: [users]
       summary: Поиск пользователей
       parameters:
@@ -291,6 +327,7 @@ paths:
 
   /v1/conversations:
     get:
+      x-implemented: true
       tags: [conversations]
       summary: Список чатов
       parameters:
@@ -309,6 +346,7 @@ paths:
                   nextCursor: { type: string, nullable: true }
           description: Страница списка чатов
     post:
+      x-implemented: true
       tags: [conversations]
       summary: Создание чата
       parameters:
@@ -352,6 +390,7 @@ paths:
 
   /v1/conversations/{conversationId}/read:
     put:
+      x-implemented: true
       tags: [conversations]
       summary: Отметка о прочтении
       parameters:
@@ -375,6 +414,7 @@ paths:
 
   /v1/conversations/{conversationId}/messages:
     get:
+      x-implemented: true
       tags: [messages]
       summary: История сообщений
       description: |
@@ -398,6 +438,7 @@ paths:
           description: Страница истории
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
+      x-implemented: true
       tags: [messages]
       summary: Отправка сообщения
       parameters:
@@ -437,6 +478,7 @@ paths:
 
   /v1/messages/{messageId}:
     patch:
+      x-implemented: true
       tags: [messages]
       summary: Редактирование сообщения
       parameters:
@@ -459,6 +501,7 @@ paths:
           description: Сообщение изменено
         '403': { $ref: '#/components/responses/Forbidden' }
     delete:
+      x-implemented: true
       tags: [messages]
       summary: Удаление сообщения
       parameters:
@@ -726,6 +769,7 @@ paths:
 
   /v1/sync:
     get:
+      x-implemented: true
       tags: [sync]
       summary: Догонка пропущенных событий
       description: |
@@ -767,6 +811,7 @@ paths:
 
   /v1/sync/bootstrap:
     get:
+      x-implemented: true
       tags: [sync]
       summary: Первичная загрузка после входа
       responses:
@@ -805,6 +850,7 @@ paths:
 
   /v1/health:
     get:
+      x-implemented: true
       tags: [sync]
       security: []
       summary: Проверка живости
@@ -813,6 +859,7 @@ paths:
 
   /v1/health/ready:
     get:
+      x-implemented: true
       tags: [sync]
       security: []
       summary: Готовность принимать трафик
@@ -871,6 +918,12 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+
+    Accepted:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
 
     Error:
       type: object

@@ -5,12 +5,15 @@ import com.mango.core.common.DefaultDispatcherProvider
 import com.mango.core.common.DispatcherProvider
 import com.mango.core.common.IdGenerator
 import com.mango.core.common.Logger
+import com.mango.core.common.RetryPolicy
 import com.mango.core.common.SystemTimeProvider
 import com.mango.core.common.TimeProvider
 import com.mango.core.common.UuidV7Generator
+import com.mango.core.data.repository.AuthRepository
 import com.mango.core.data.repository.ConversationRepository
-import com.mango.core.data.repository.LocalConversationRepository
-import com.mango.core.data.repository.LocalMessageRepository
+import com.mango.core.data.repository.DefaultAuthRepository
+import com.mango.core.data.repository.DefaultConversationRepository
+import com.mango.core.data.repository.DefaultMessageRepository
 import com.mango.core.data.repository.LocalSyncStatusRepository
 import com.mango.core.data.repository.LocalTaskRepository
 import com.mango.core.data.repository.LocalUserRepository
@@ -37,13 +40,17 @@ abstract class RepositoryModule {
 
     @Binds
     @Singleton
+    abstract fun bindAuthRepository(impl: DefaultAuthRepository): AuthRepository
+
+    @Binds
+    @Singleton
     abstract fun bindConversationRepository(
-        impl: LocalConversationRepository,
+        impl: DefaultConversationRepository,
     ): ConversationRepository
 
     @Binds
     @Singleton
-    abstract fun bindMessageRepository(impl: LocalMessageRepository): MessageRepository
+    abstract fun bindMessageRepository(impl: DefaultMessageRepository): MessageRepository
 
     @Binds
     @Singleton
@@ -69,6 +76,17 @@ object CoreProvidersModule {
     @Provides
     @Singleton
     fun provideTimeProvider(): TimeProvider = SystemTimeProvider()
+
+    /**
+     * Политика повторов для очереди исходящих.
+     *
+     * Задаётся явной привязкой, а не значением параметра по умолчанию:
+     * Dagger значения по умолчанию не видит, и сборка графа падала бы
+     * с отсутствующей зависимостью.
+     */
+    @Provides
+    @Singleton
+    fun provideRetryPolicy(): RetryPolicy = RetryPolicy.Default
 
     @Provides
     @Singleton

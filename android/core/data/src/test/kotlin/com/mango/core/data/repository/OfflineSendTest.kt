@@ -17,6 +17,12 @@ import com.mango.core.database.entity.MessageEntity
 import com.mango.core.database.entity.OutboxStatus
 import com.mango.core.database.entity.UserEntity
 import com.mango.core.model.ConversationId
+import com.mango.core.network.MessagingRemoteDataSource
+import com.mango.core.network.api.MessagingApi
+import com.mango.core.network.dto.CreateConversationRequestDto
+import com.mango.core.network.dto.EditMessageRequestDto
+import com.mango.core.network.dto.MarkReadRequestDto
+import com.mango.core.network.dto.SendMessageRequestDto
 import com.mango.core.model.ConversationType
 import com.mango.core.model.MemberRole
 import com.mango.core.model.MessageDeliveryStatus
@@ -59,7 +65,7 @@ import java.time.Instant
 class OfflineSendTest {
 
     private lateinit var database: MangoDatabase
-    private lateinit var messageRepository: LocalMessageRepository
+    private lateinit var messageRepository: DefaultMessageRepository
     private lateinit var taskRepository: LocalTaskRepository
     private lateinit var syncRepository: LocalSyncStatusRepository
 
@@ -83,8 +89,9 @@ class OfflineSendTest {
 
         val idGenerator = UuidV7Generator(clockMillis = { time.nowMillis() })
 
-        messageRepository = LocalMessageRepository(
+        messageRepository = DefaultMessageRepository(
             database = database,
+            remote = offlineRemote(),
             idGenerator = idGenerator,
             time = time,
             dispatchers = testDispatchers,
@@ -398,8 +405,9 @@ class OfflineSendTest {
 
     @Test
     fun `draft operation is collapsed to a single queue entry`() = runTest {
-        val conversations = LocalConversationRepository(
+        val conversations = DefaultConversationRepository(
             database = database,
+            remote = offlineRemote(),
             idGenerator = UuidV7Generator(clockMillis = { time.nowMillis() }),
             time = time,
             dispatchers = testDispatchers,
@@ -422,6 +430,38 @@ class OfflineSendTest {
             database.conversationDao().findById(conversationId.value)!!.draft,
         )
     }
+
+    /**
+     * Источник данных без сети.
+     *
+     * Любой запрос завершается сетевой ошибкой — ровно то, что нужно
+     * проверить: запись обязана работать и сохраняться без сервера.
+     * Подделка на уровне HTTP, а не репозитория, потому что именно так
+     * ведёт себя устройство в самолёте.
+     */
+    private fun offlineRemote(): MessagingRemoteDataSource =
+        MessagingRemoteDataSource(
+            object : MessagingApi {
+                private fun fail(): Nothing = throw java.io.IOException("нет сети")
+
+                override suspend fun conversations(limit: Int) = fail()
+                override suspend fun createConversation(body: CreateConversationRequestDto) = fail()
+                override suspend fun conversation(id: String) = fail()
+                override suspend fun members(id: String) = fail()
+                override suspend fun markRead(id: String, body: MarkReadRequestDto) = fail()
+                override suspend fun messages(
+                    id: String,
+                    beforeSeq: Long?,
+                    afterSeq: Long?,
+                    limit: Int,
+                ) = fail()
+
+                override suspend fun sendMessage(id: String, body: SendMessageRequestDto) = fail()
+                override suspend fun editMessage(id: String, body: EditMessageRequestDto) = fail()
+                override suspend fun deleteMessage(id: String) = fail()
+                override suspend fun searchUsers(query: String, limit: Int) = fail()
+            },
+        )
 
     /** Защита от случайного использования реального диспетчера в тестах. */
     @Test

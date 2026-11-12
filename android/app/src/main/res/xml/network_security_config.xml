@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Конфигурация сети для релизной сборки.
+
+  Открытый HTTP запрещён целиком: трафик мессенджера не должен ходить
+  без шифрования ни при каких настройках сервера.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

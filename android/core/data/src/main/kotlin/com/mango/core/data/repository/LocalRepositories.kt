@@ -6,7 +6,9 @@ import com.mango.core.common.DispatcherProvider
 import com.mango.core.common.IdGenerator
 import com.mango.core.common.Outcome
 import com.mango.core.common.TimeProvider
+import com.mango.core.data.mapper.senderEntity
 import com.mango.core.data.mapper.toDomain
+import com.mango.core.data.mapper.toEntity
 import com.mango.core.data.outbox.CreateTaskPayload
 import com.mango.core.data.outbox.DeleteTaskPayload
 import com.mango.core.data.outbox.EntityType
@@ -17,11 +19,14 @@ import com.mango.core.data.outbox.outboxOperation
 import com.mango.core.data.outbox.PatchTaskPayload
 import com.mango.core.data.outbox.SaveDraftPayload
 import com.mango.core.database.MangoDatabase
+import com.mango.core.database.entity.ConversationMemberEntity
 import com.mango.core.database.entity.TaskAssigneeEntity
 import com.mango.core.database.entity.TaskEntity
 import com.mango.core.database.entity.TaskEventEntity
+import com.mango.core.network.MessagingRemoteDataSource
 import com.mango.core.model.Conversation
 import com.mango.core.model.ConversationId
+import com.mango.core.model.MemberRole
 import com.mango.core.model.MessageId
 import com.mango.core.model.SyncStatus
 import com.mango.core.model.Task
@@ -40,8 +45,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class LocalConversationRepository @Inject constructor(
+class DefaultConversationRepository @Inject constructor(
     private val database: MangoDatabase,
+    private val remote: MessagingRemoteDataSource,
     private val idGenerator: IdGenerator,
     private val time: TimeProvider,
     private val dispatchers: DispatcherProvider,
@@ -144,6 +150,101 @@ class LocalConversationRepository @Inject constructor(
             runCatching { conversationDao.setMuted(id.value, mutedUntilMillis) }
                 .fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
         }
+
+    override suspend fun refresh(): Outcome<Unit> = withContext(dispatchers.io) {
+        when (val response = remote.conversations()) {
+            is Outcome.Failure -> response
+            is Outcome.Success -> {
+                runCatching {
+                    database.withTransaction {
+                        response.value.items.forEach { dto ->
+                            conversationDao.upsert(dto.toEntity())
+                            dto.lastMessage?.let { message ->
+                                rememberSender(message.senderId, message.senderName)
+                                database.messageDao().upsert(message.toEntity())
+                            }
+                        }
+                    }
+                }.fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
+            }
+        }
+    }
+
+    override suspend fun openDirect(userId: UserId): Outcome<ConversationId> =
+        withContext(dispatchers.io) {
+            when (val response = remote.createDirect(userId.value)) {
+                is Outcome.Failure -> response
+                is Outcome.Success -> {
+                    runCatching {
+                        conversationDao.upsert(response.value.toEntity())
+                    }.fold(
+                        { Outcome.Success(ConversationId(response.value.id)) },
+                        { Outcome.Failure(AppError.Storage(it)) },
+                    )
+                }
+            }
+        }
+
+    override suspend fun loadMembers(id: ConversationId): Outcome<Unit> =
+        withContext(dispatchers.io) {
+            when (val response = remote.members(id.value)) {
+                is Outcome.Failure -> response
+                is Outcome.Success -> {
+                    runCatching {
+                        database.withTransaction {
+                            response.value.items.forEach { member ->
+                                userDao.upsert(member.toEntity())
+                                conversationDao.upsertMembers(
+                                    listOf(
+                                        ConversationMemberEntity(
+                                            conversationId = id.value,
+                                            userId = member.userId,
+                                            role = runCatching { MemberRole.valueOf(member.role) }
+                                                .getOrDefault(MemberRole.MEMBER),
+                                            joinedAt = member.joinedAt.toEpochMilli(),
+                                            lastReadSeq = member.lastReadSeq,
+                                            leftAt = null,
+                                        ),
+                                    ),
+                                )
+                            }
+                        }
+                    }.fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
+                }
+            }
+        }
+
+    /**
+     * Поиск людей.
+     *
+     * Найденные записываются в локальную базу: после начала переписки
+     * имя собеседника должно отображаться даже без сети.
+     */
+    override suspend fun searchPeople(query: String): Outcome<List<User>> =
+        withContext(dispatchers.io) {
+            when (val response = remote.searchUsers(query)) {
+                is Outcome.Failure -> response
+                is Outcome.Success -> {
+                    runCatching {
+                        response.value.items.forEach { userDao.upsert(it.toEntity()) }
+                        response.value.items.map { dto ->
+                            User(
+                                id = UserId(dto.id),
+                                username = dto.username,
+                                displayName = dto.displayName,
+                                avatarUrl = dto.avatarUrl,
+                            )
+                        }
+                    }.fold({ Outcome.Success(it) }, { Outcome.Failure(AppError.Storage(it)) })
+                }
+            }
+        }
+
+    private suspend fun rememberSender(id: String, displayName: String) {
+        if (userDao.findById(id) == null) {
+            userDao.upsert(senderEntity(id, displayName, null))
+        }
+    }
 }
 
 @Singleton

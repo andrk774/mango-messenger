@@ -1,0 +1,115 @@
+# Локальный стек Mango Messenger.
+#
+# Порты на хосте выбраны НЕстандартными (5433 вместо 5432, 6380 вместо 6379
+# и так далее): на машине разработчика уже может работать другой проект
+# со своим PostgreSQL и Redis, и занятый порт — самая частая причина
+# «у меня не запускается».
+#
+# Запуск:
+#   cp .env.example .env
+#   docker compose -f infrastructure/docker/docker-compose.yml up -d --build
+
+name: mango
+
+services:
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mango}
+      POSTGRES_USER: ${POSTGRES_USER:-mango}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mango}
+      # Инициализация с явной локалью: от неё зависит поведение
+      # сортировки текста, а значит и порядок в выдаче поиска.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      # Только на localhost: база не должна быть видна из локальной сети.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready, а не TCP-проверка: порт открывается раньше, чем база
+      # готова принимать запросы, и backend стартовал бы слишком рано.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mango} -d ${POSTGRES_DB:-mango}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    # appendonly для сохранности данных между перезапусками: Redis
+    # используется под счётчики ограничения частоты и очереди событий.
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Объектное хранилище (вложения) — Этап 6.
+  #
+  # Сервис СОЗНАТЕЛЬНО отсутствует: образы MinIO перестали быть доступны
+  # для анонимной загрузки и с Docker Hub, и с quay.io (проверено
+  # 12.11.2026: Hub отдаёт 404 на репозиторий, quay — 401).
+  # Выбор S3-совместимого хранилища (SeaweedFS, Zenko CloudServer либо
+  # MinIO с учётной записью) делается на Этапе 6, когда появятся вложения.
+  # Добавлять нерабочий сервис сейчас означало бы ломать запуск стека
+  # ради функции, которой ещё нет.
+
+  mailpit:
+    # Перехватывает ВСЕ исходящие письма и показывает их в веб-интерфейсе.
+    # Благодаря этому подтверждение адреса проверяется локально, без
+    # настоящего почтового провайдера и без риска написать живому человеку.
+    image: axllent/mailpit:latest
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1026}:1025"
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8026}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    environment:
+      MANGO_ENV: ${MANGO_ENV:-LOCAL}
+      MANGO_HTTP_PORT: "8080"
+      # Внутри сети compose обращение идёт по имени сервиса и
+      # ВНУТРЕННЕМУ порту, а не по проброшенному на хост.
+      MANGO_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-mango}
+      MANGO_DB_USER: ${POSTGRES_USER:-mango}
+      MANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-mango}
+      MANGO_REDIS_URL: redis://redis:6379
+      MANGO_SMTP_HOST: mailpit
+      MANGO_SMTP_PORT: "1025"
+      MANGO_JWT_SECRET: ${MANGO_JWT_SECRET:?нужно задать MANGO_JWT_SECRET в .env}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8081}:8080"
+    depends_on:
+      postgres:
+        # Ожидание именно ГОТОВНОСТИ, а не запуска: иначе миграции
+        # стартуют раньше, чем база примет подключение.
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

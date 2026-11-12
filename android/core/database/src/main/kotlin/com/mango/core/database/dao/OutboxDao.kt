@@ -51,6 +51,37 @@ interface OutboxDao {
     )
     suspend fun nextBatch(nowMillis: Long, limit: Int = 20): List<OutboxOperationEntity>
 
+    /**
+     * Порция операций, ограниченная поддерживаемыми типами.
+     *
+     * Фильтр по типу нужен, потому что в очереди могут лежать операции,
+     * которые текущая версия сервера ещё не принимает. Без фильтра они
+     * заняли бы всю порцию и заблокировали отправку остальных —
+     * при том что сами всё равно не могут быть выполнены.
+     */
+    @Query(
+        """
+        SELECT * FROM outbox_operations
+        WHERE status = 'PENDING'
+          AND op_type IN (:opTypes)
+          AND next_attempt_at <= :nowMillis
+          AND (
+              depends_on_op_id IS NULL
+              OR NOT EXISTS (
+                  SELECT 1 FROM outbox_operations dep
+                  WHERE dep.client_op_id = outbox_operations.depends_on_op_id
+              )
+          )
+        ORDER BY created_at ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun nextBatchOfTypes(
+        nowMillis: Long,
+        opTypes: List<String>,
+        limit: Int = 20,
+    ): List<OutboxOperationEntity>
+
     @Query("SELECT * FROM outbox_operations WHERE client_op_id = :clientOpId")
     suspend fun findByClientOpId(clientOpId: String): OutboxOperationEntity?
 

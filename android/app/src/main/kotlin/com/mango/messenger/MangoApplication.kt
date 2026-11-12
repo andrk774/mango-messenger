@@ -1,6 +1,8 @@
 package com.mango.messenger
 
 import android.app.Application
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import com.mango.core.common.DispatcherProvider
 import com.mango.core.common.Logger
 import com.mango.core.data.repository.SyncStatusRepository
@@ -11,7 +13,21 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltAndroidApp
-class MangoApplication : Application() {
+class MangoApplication : Application(), Configuration.Provider {
+
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+
+    /**
+     * Своя фабрика воркеров.
+     *
+     * Без неё WorkManager не сможет создать [com.mango.core.sync.SyncWorker]
+     * с внедрёнными зависимостями, и фоновая отправка молча не заработает —
+     * задача будет падать при создании.
+     */
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
 
     @Inject lateinit var syncStatusRepository: SyncStatusRepository
 

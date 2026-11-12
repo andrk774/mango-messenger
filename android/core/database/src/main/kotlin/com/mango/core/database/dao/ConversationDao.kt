@@ -157,6 +157,21 @@ interface ConversationDao {
     suspend fun updateMemberRole(conversationId: String, userId: String, role: MemberRole)
 
     /**
+     * Отметка прочтения конкретного участника.
+     *
+     * Нужна, чтобы показать «прочитано» под своим сообщением. Значение
+     * только растёт: запоздавшее событие не должно откатывать отметку.
+     */
+    @Query(
+        """
+        UPDATE conversation_members
+        SET last_read_seq = MAX(last_read_seq, :seq)
+        WHERE conversation_id = :conversationId AND user_id = :userId
+        """,
+    )
+    suspend fun advanceMemberReadSeq(conversationId: String, userId: String, seq: Long)
+
+    /**
      * Поиск существующего личного чата с пользователем.
      *
      * Нужен, чтобы повторное открытие переписки не создавало второй DIRECT-чат.

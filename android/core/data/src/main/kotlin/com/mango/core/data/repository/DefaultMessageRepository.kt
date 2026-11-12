@@ -8,7 +8,9 @@ import com.mango.core.common.Logger
 import com.mango.core.common.Outcome
 import com.mango.core.common.Redact
 import com.mango.core.common.TimeProvider
+import com.mango.core.data.mapper.senderEntity
 import com.mango.core.data.mapper.toDomain
+import com.mango.core.data.mapper.toEntity
 import com.mango.core.data.mapper.toDomainReactions
 import com.mango.core.data.outbox.DeleteMessagePayload
 import com.mango.core.data.outbox.EditMessagePayload
@@ -19,6 +21,7 @@ import com.mango.core.data.outbox.outboxOperation
 import com.mango.core.data.outbox.SendMessagePayload
 import com.mango.core.data.outbox.ToggleReactionPayload
 import com.mango.core.database.MangoDatabase
+import com.mango.core.network.MessagingRemoteDataSource
 import com.mango.core.database.entity.MessageEntity
 import com.mango.core.database.entity.MessageReactionEntity
 import com.mango.core.model.ClientOpId
@@ -45,8 +48,9 @@ import javax.inject.Singleton
  * и поведение интерфейса не изменятся.
  */
 @Singleton
-class LocalMessageRepository @Inject constructor(
+class DefaultMessageRepository @Inject constructor(
     private val database: MangoDatabase,
+    private val remote: MessagingRemoteDataSource,
     private val idGenerator: IdGenerator,
     private val time: TimeProvider,
     private val dispatchers: DispatcherProvider,
@@ -315,6 +319,36 @@ class LocalMessageRepository @Inject constructor(
             { Outcome.Success(it) },
             { Outcome.Failure(AppError.Storage(it)) },
         )
+    }
+
+    /**
+     * Догрузка истории с сервера.
+     *
+     * Записывается только пришедшее: локальные неотправленные сообщения
+     * не трогаются, иначе прокрутка истории стирала бы то, что
+     * пользователь ещё не успел отправить.
+     */
+    override suspend fun loadHistory(
+        conversationId: ConversationId,
+        beforeSeq: Long?,
+        limit: Int,
+    ): Outcome<Int> = withContext(dispatchers.io) {
+        when (val response = remote.messages(conversationId.value, beforeSeq, null, limit)) {
+            is Outcome.Failure -> response
+            is Outcome.Success -> {
+                runCatching {
+                    database.withTransaction {
+                        response.value.items.forEach { dto ->
+                            if (userDao.findById(dto.senderId) == null) {
+                                userDao.upsert(senderEntity(dto.senderId, dto.senderName, null))
+                            }
+                            messageDao.upsert(dto.toEntity())
+                        }
+                    }
+                    response.value.items.size
+                }.fold({ Outcome.Success(it) }, { Outcome.Failure(AppError.Storage(it)) })
+            }
+        }
     }
 
     private companion object {

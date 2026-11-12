@@ -6,12 +6,25 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -20,6 +33,9 @@ import com.mango.core.designsystem.component.ConversationListItem
 import com.mango.core.designsystem.component.EmptyState
 import com.mango.core.designsystem.component.FullScreenLoading
 import com.mango.core.designsystem.component.MangoSearchBar
+import com.mango.core.designsystem.component.MangoTextButton
+import com.mango.core.designsystem.component.MemberListItem
+import com.mango.core.designsystem.component.PagingFooterLoading
 import com.mango.core.designsystem.component.MangoTopAppBar
 import com.mango.core.designsystem.component.SyncStatusIndicator
 import com.mango.core.model.Conversation
@@ -36,10 +52,22 @@ import com.mango.messenger.ui.format.TimeFormatters
 @Composable
 fun ChatsScreen(
     onConversationClick: (Conversation) -> Unit,
+    onOpenConversationById: (String) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ChatsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val newChat by viewModel.newChat.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is ChatsEvent.Message -> snackbarHostState.showSnackbar(event.text)
+                is ChatsEvent.OpenConversation -> onOpenConversationById(event.id.value)
+            }
+        }
+    }
 
     Scaffold(
         modifier = modifier,
@@ -66,6 +94,12 @@ fun ChatsScreen(
                     }
                 },
             )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = viewModel::openNewChat) {
+                Icon(Icons.Default.Add, contentDescription = "Новая переписка")
+            }
         },
     ) { padding ->
         Column(Modifier.padding(padding)) {
@@ -98,6 +132,15 @@ fun ChatsScreen(
                 )
             }
         }
+    }
+
+    if (newChat.isOpen) {
+        NewChatDialog(
+            state = newChat,
+            onQueryChange = viewModel::onPeopleQueryChange,
+            onSelect = { viewModel.startChatWith(it.id) },
+            onDismiss = viewModel::closeNewChat,
+        )
     }
 }
 
@@ -135,6 +178,55 @@ private fun ConversationList(
             HorizontalDivider(Modifier.padding(start = 80.dp))
         }
     }
+}
+
+@Composable
+private fun NewChatDialog(
+    state: NewChatUiState,
+    onQueryChange: (String) -> Unit,
+    onSelect: (com.mango.core.model.User) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Новая переписка") },
+        text = {
+            Column {
+                MangoSearchBar(
+                    query = state.query,
+                    onQueryChange = onQueryChange,
+                    placeholder = "Имя или имя пользователя",
+                )
+                Spacer(Modifier.height(12.dp))
+
+                when {
+                    state.isSearching -> PagingFooterLoading()
+
+                    state.hint != null -> Text(
+                        text = state.hint,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    else -> LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                        items(items = state.results, key = { it.id.value }) { user ->
+                            MemberListItem(
+                                displayName = user.displayName,
+                                initials = user.initials,
+                                roleLabel = "@${'$'}{user.username}",
+                                avatarUrl = user.avatarUrl,
+                                onClick = { onSelect(user) },
+                            )
+                            HorizontalDivider(Modifier.padding(start = 68.dp))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            MangoTextButton(text = "Закрыть", onClick = onDismiss)
+        },
+    )
 }
 
 private fun com.mango.core.model.MessagePreview.previewText(): String = when {

@@ -1,0 +1,18 @@
+<configuration>
+    <!-- Идентификатор запроса попадает в каждую строку: по нему обращение
+         пользователя сопоставляется с записями журнала. -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-—}] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+    <!-- Netty и Hikari на DEBUG заливают журнал служебными сообщениями. -->
+    <logger name="io.netty" level="WARN"/>
+    <logger name="com.zaxxer.hikari" level="INFO"/>
+    <logger name="org.flywaydb" level="INFO"/>
+</configuration>
