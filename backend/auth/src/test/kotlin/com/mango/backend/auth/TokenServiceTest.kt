@@ -143,7 +143,7 @@ class TokenServiceTest {
         val second = service.issueOneTimeToken()
 
         assertNotEquals(first.value, second.value)
-        assertEquals(first.hash, service.hashRefreshToken(first.value))
+        assertEquals(first.hash, service.hashOneTimeToken(first.value))
     }
 
     @Test
@@ -174,5 +174,39 @@ class TokenServiceTest {
             service.verifyAccessToken(token),
             "Без sid нельзя связать запрос с сессией — такой токен бесполезен",
         )
+    }
+
+    // ─────────────────────── код из письма ───────────────────────
+
+    @Test
+    fun `код из письма короткий и без похожих символов`() {
+        repeat(200) {
+            val code = service.issueOneTimeToken().value
+            assertTrue(Regex("^[2-9A-HJKMNP-Z]{5}-[2-9A-HJKMNP-Z]{5}$").matches(code), code)
+            assertTrue(code.none { it in "01ILO" }, "Похожие символы в коде: $code")
+        }
+    }
+
+    @Test
+    fun `код принимается в любом регистре, с пробелами и без дефиса`() {
+        val issued = service.issueOneTimeToken()
+        val compact = issued.value.replace("-", "")
+
+        listOf(
+            issued.value,
+            compact,
+            compact.lowercase(),
+            " ${issued.value.lowercase()} ",
+            compact.chunked(2).joinToString(" "),
+        ).forEach { typed ->
+            assertEquals(issued.hash, service.hashOneTimeToken(typed), "Не принят ввод «$typed»")
+        }
+    }
+
+    @Test
+    fun `длинный код из старого письма по-прежнему проверяется точно`() {
+        val legacy = "HVSW2w3j76y3rSheR4q8yLG6XEe79o2M8YNJR7XSlVM"
+        assertEquals(service.hashRefreshToken(legacy), service.hashOneTimeToken(legacy))
+        assertNotEquals(service.hashRefreshToken(legacy), service.hashOneTimeToken(legacy.uppercase()))
     }
 }

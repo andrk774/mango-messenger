@@ -102,15 +102,16 @@ paths:
       x-implemented: true
       tags: [auth]
       security: []
-      summary: Подтверждение email по токену из письма
+      summary: Подтверждение email по адресу и коду из письма
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [token]
+              required: [email, token]
               properties:
+                email: { type: string, format: email }
                 token: { type: string }
       responses:
         '200': { description: Email подтверждён }
@@ -222,8 +223,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [token, newPassword]
+              required: [email, token, newPassword]
               properties:
+                email: { type: string, format: email }
                 token: { type: string }
                 newPassword: { type: string, minLength: 10 }
       responses:
@@ -308,8 +310,16 @@ paths:
 
   /v1/users/me/devices/push:
     put:
+      x-implemented: true
       tags: [users]
       summary: Регистрация push-токена устройства
+      description: |
+        Токен привязывается к устройству текущей сессии (устройство заводится
+        при входе со сведениями `device`). Тот же токен у другого устройства
+        снимается — телефон мог перейти к другому человеку. Push уходят
+        только на устройства с живой сессией и содержат лишь идентификаторы
+        (ADR-0010): `{type: message, conversationId, messageId}` либо
+        `{type: task_reminder, taskId}`.
       requestBody:
         required: true
         content:
@@ -318,10 +328,18 @@ paths:
               type: object
               required: [provider, token]
               properties:
-                provider: { type: string, enum: [FCM, HMS, DEV] }
-                token: { type: string }
+                provider: { type: string, enum: [FCM] }
+                token: { type: string, maxLength: 4096 }
       responses:
         '204': { description: Токен сохранён }
+        '409': { description: Сессия не связана с устройством — нужен вход со сведениями об устройстве }
+    delete:
+      x-implemented: true
+      tags: [users]
+      summary: Отказ от push на этом устройстве
+      description: Вызывается при выходе, до завершения сессии.
+      responses:
+        '204': { description: Токен снят }
 
   # ───────────────────── conversations ─────────────────────
 

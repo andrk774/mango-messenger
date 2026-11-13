@@ -13,6 +13,7 @@ dependencies {
     implementation(projects.realtime)
     implementation(projects.tasks)
     implementation(projects.storage)
+    implementation(projects.notifications)
 
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)

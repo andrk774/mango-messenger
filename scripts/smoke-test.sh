@@ -80,12 +80,12 @@ token=$(printf '%s' "$letter" | sed -nE 's/.*Код подтверждения: 
 [ -n "$token" ] || fail "в письме нет кода подтверждения"
 
 code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' -X POST "$API/v1/auth/verify-email" \
-    -H 'Content-Type: application/json' -d "{\"token\":\"$token\"}")
+    -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"token\":\"$token\"}")
 [ "$code" = "200" ] || fail "подтверждение вернуло $code"
 pass "адрес подтверждён"
 
 code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' -X POST "$API/v1/auth/verify-email" \
-    -H 'Content-Type: application/json' -d "{\"token\":\"$token\"}")
+    -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"token\":\"$token\"}")
 [ "$code" = "400" ] || fail "повторное подтверждение вернуло $code вместо 400"
 pass "ссылка подтверждения одноразовая"
 
@@ -154,7 +154,7 @@ mid2=$(printf '%s' "$letters2" | sed -nE 's/.*"ID":"([^"]+)".*/\1/p' | head -1)
 letter2=$(curl -s -m 15 "$MAILPIT/api/v1/message/$mid2")
 token2=$(printf '%s' "$letter2" | sed -nE 's/.*Код подтверждения: ([A-Za-z0-9_-]+).*/\1/p' | head -1)
 curl -s -o /dev/null -m 15 -X POST "$API/v1/auth/verify-email" \
-    -H 'Content-Type: application/json' -d "{\"token\":\"$token2\"}"
+    -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL2\",\"token\":\"$token2\"}"
 
 tokens2=$(curl -s -m 20 -X POST "$API/v1/auth/login" \
     -H 'Content-Type: application/json' \
@@ -358,6 +358,26 @@ code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' -X DELETE "$API/v1/conversat
 code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$API/v1/attachments/$ATT_ID/url" -H "Authorization: Bearer $access2")
 [ "$code" = "403" ] || fail "удалённый участник всё ещё получает файлы (код $code)"
 pass "удалённый участник теряет доступ к файлам группы"
+
+# ───────────────────────── 10. push (Этап 6b) ─────────────────────────
+
+# Вход со сведениями об устройстве — как это делает приложение:
+# push-токен привязывается к устройству сессии.
+dev_login=$(curl -s -m 20 -X POST "$API/v1/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$EMAIL2\",\"password\":\"$PASSWORD\",\"device\":{\"platform\":\"ANDROID\",\"model\":\"smoke\"}}")
+dev_access=$(json_field "$dev_login" accessToken)
+[ -n "$dev_access" ] || fail "вход с устройством не удался"
+
+code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' -X PUT "$API/v1/users/me/devices/push" \
+    -H "Authorization: Bearer $dev_access" -H 'Content-Type: application/json' \
+    -d '{"provider":"FCM","token":"smoke-push-token"}')
+[ "$code" = "204" ] || fail "регистрация push-токена вернула $code"
+
+code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' -X DELETE "$API/v1/users/me/devices/push" \
+    -H "Authorization: Bearer $dev_access")
+[ "$code" = "204" ] || fail "снятие push-токена вернуло $code"
+pass "push-токен регистрируется и снимается"
 
 code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' \
     "$API/v1/conversations/$conv_id/messages" -H "Authorization: Bearer $access")

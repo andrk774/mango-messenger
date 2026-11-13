@@ -100,6 +100,8 @@ abstract class IntegrationTestBase {
      */
     protected fun withApp(
         rateLimiter: RateLimiter = NoopRateLimiter,
+        pushProvider: com.mango.backend.notifications.PushProvider =
+            com.mango.backend.notifications.LoggingPushProvider(),
         block: suspend ApplicationTestBuilder.(HttpClient) -> Unit,
     ) = testApplication {
             application {
@@ -112,6 +114,7 @@ abstract class IntegrationTestBase {
                     mailSender = mail,
                     rateLimiter = rateLimiter,
                     wsAuthTimeoutMillis = 1_000,
+                    pushProvider = pushProvider,
                 )
             }
 
@@ -150,7 +153,7 @@ abstract class IntegrationTestBase {
         }
         post("/v1/auth/verify-email") {
             contentType(ContentType.Application.Json)
-            setBody(VerifyEmailRequest(mail.tokenFor(email)))
+            setBody(VerifyEmailRequest(mail.tokenFor(email), email))
         }
         return post("/v1/auth/login") {
             contentType(ContentType.Application.Json)

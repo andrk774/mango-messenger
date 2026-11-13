@@ -14,6 +14,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -47,9 +48,18 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var settingsStore: SettingsStore
 
+    /** Куда перейти после нажатия на уведомление. */
+    private val deepLink = androidx.compose.runtime.mutableStateOf<DeepLink?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        deepLink.value = DeepLink.from(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) deepLink.value = DeepLink.from(intent)
 
         setContent {
             // Настройки темы читаются из DataStore, поэтому выбор пользователя
@@ -80,19 +90,86 @@ class MainActivity : ComponentActivity() {
                             onAuthenticated = mainViewModel::onSignedIn,
                         )
 
-                        AppState.SignedIn -> MangoApp(onSignOut = mainViewModel::signOut)
+                        AppState.SignedIn -> MangoApp(
+                            onSignOut = mainViewModel::signOut,
+                            deepLink = deepLink.value,
+                            onDeepLinkHandled = { deepLink.value = null },
+                        )
                     }
                 }
             }
         }
     }
+
+    companion object {
+        const val EXTRA_CONVERSATION_ID = "open_conversation"
+        const val EXTRA_OPEN_TASKS = "open_tasks"
+    }
+}
+
+/** Переход из уведомления. */
+sealed interface DeepLink {
+    data class Conversation(val id: String) : DeepLink
+    data object Tasks : DeepLink
+
+    companion object {
+        fun from(intent: android.content.Intent?): DeepLink? = when {
+            intent == null -> null
+            intent.hasExtra(MainActivity.EXTRA_CONVERSATION_ID) ->
+                intent.getStringExtra(MainActivity.EXTRA_CONVERSATION_ID)?.let(::Conversation)
+            intent.hasExtra(MainActivity.EXTRA_OPEN_TASKS) -> Tasks
+            else -> null
+        }
+    }
+}
+
+/**
+ * Запрос разрешения на уведомления (Android 13+).
+ *
+ * Один раз после входа, а не при первом запуске: до входа уведомлять
+ * не о чем, и запрос без контекста пользователи чаще отклоняют.
+ */
+@Composable
+private fun RequestNotificationPermission() {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var asked by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.POST_NOTIFICATIONS,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted && !asked) {
+            asked = true
+            launcher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 }
 
 @Composable
-private fun MangoApp(onSignOut: () -> Unit) {
+private fun MangoApp(
+    onSignOut: () -> Unit,
+    deepLink: DeepLink?,
+    onDeepLinkHandled: () -> Unit,
+) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
+
+    RequestNotificationPermission()
+
+    androidx.compose.runtime.LaunchedEffect(deepLink) {
+        when (deepLink) {
+            is DeepLink.Conversation -> navController.navigate(Routes.conversation(deepLink.id)) {
+                launchSingleTop = true
+            }
+            DeepLink.Tasks -> navController.navigateToTopLevel(Routes.TASKS)
+            null -> return@LaunchedEffect
+        }
+        onDeepLinkHandled()
+    }
 
     Scaffold(
         bottomBar = {
@@ -157,7 +234,7 @@ private fun MangoApp(onSignOut: () -> Unit) {
                 NotificationsScreen(modifier = Modifier.padding(padding))
             }
             composable(Routes.SETTINGS) {
-                SettingsScreen(modifier = Modifier.padding(padding))
+                SettingsScreen(onSignOut = onSignOut, modifier = Modifier.padding(padding))
             }
 
             composable(Routes.CONVERSATION) {

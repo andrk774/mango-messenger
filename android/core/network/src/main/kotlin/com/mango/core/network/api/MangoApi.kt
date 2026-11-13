@@ -73,6 +73,12 @@ interface AuthApi {
 
     @GET("v1/users/me")
     suspend fun me(): Response<CurrentUserDto>
+
+    @PUT("v1/users/me/devices/push")
+    suspend fun registerPush(@Body body: com.mango.core.network.dto.RegisterPushTokenRequestDto): Response<Unit>
+
+    @DELETE("v1/users/me/devices/push")
+    suspend fun unregisterPush(): Response<Unit>
 }
 
 interface MessagingApi {

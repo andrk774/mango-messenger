@@ -30,6 +30,7 @@ class MainViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val realtimeClient: RealtimeClient,
     private val workManager: WorkManager,
+    private val pushRegistrar: com.mango.messenger.push.PushRegistrar,
 ) : ViewModel() {
 
     private val sessionRestored = MutableStateFlow(false)
@@ -63,6 +64,8 @@ class MainViewModel @Inject constructor(
                 if (authenticated) {
                     realtimeClient.start()
                     SyncWorker.enqueue(workManager)
+                    // Токен мог смениться, пока приложение не работало.
+                    launch { pushRegistrar.registerCurrentToken() }
                 } else {
                     realtimeClient.stop()
                 }

@@ -35,8 +35,11 @@ class MangoApplication : Application(), Configuration.Provider {
 
     @Inject lateinit var logger: Logger
 
+    @Inject lateinit var notifier: com.mango.messenger.push.Notifier
+
     override fun onCreate() {
         super.onCreate()
+        notifier.createChannels()
         recoverOutboxAfterRestart()
     }
 

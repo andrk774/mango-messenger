@@ -11,6 +11,8 @@ local.properties
 *.jks
 *.keystore
 google-services.json
+# Ключ сервисного аккаунта Firebase и прочие серверные секреты.
+secrets/
 
 # IDE
 .idea/

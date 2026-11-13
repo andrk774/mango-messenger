@@ -165,4 +165,55 @@ class RateLimitTest : IntegrationTestBase() {
             contentType(ContentType.Application.Json)
             setBody(LoginRequest(email = email, password = password))
         }
+
+    @Test
+    fun `подбор кода упирается в предел по почте, а соседей не блокирует`() =
+        withApp(InMemoryRateLimiter(time)) { client ->
+            suspend fun attempt(email: String, code: String) =
+                client.post("/v1/auth/verify-email") {
+                    contentType(ContentType.Application.Json)
+                    // Один адрес на всех — как домашняя сеть за Docker Desktop.
+                    header(HttpHeaders.XForwardedFor, "203.0.113.9")
+                    setBody(com.mango.backend.auth.VerifyEmailRequest(code, email))
+                }
+
+            repeat(RateLimits.CODE_LIMIT) {
+                assertEquals(HttpStatusCode.BadRequest, attempt("victim@example.com", "AAAAA-AAAA$it").status)
+            }
+            assertEquals(HttpStatusCode.TooManyRequests, attempt("victim@example.com", "AAAAA-BBBBB").status)
+
+            // Перебор к этой почте не помогает сменой адреса...
+            val otherIp = client.post("/v1/auth/verify-email") {
+                contentType(ContentType.Application.Json)
+                header(HttpHeaders.XForwardedFor, "198.51.100.77")
+                setBody(com.mango.backend.auth.VerifyEmailRequest("AAAAA-CCCCC", "victim@example.com"))
+            }
+            assertEquals(HttpStatusCode.TooManyRequests, otherIp.status)
+
+            // ...а человек с другой почтой за тем же роутером не страдает.
+            assertEquals(HttpStatusCode.BadRequest, attempt("neighbour@example.com", "AAAAA-DDDDD").status)
+        }
+
+    @Test
+    fun `код чужой почты не принимается`() = withApp { client ->
+        val anna = "anna@example.com"
+        client.post("/v1/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(RegisterRequest(email = anna, password = "ДлинныйПароль-2026", displayName = "Анна", username = "anna"))
+        }
+        val code = mail.tokenFor(anna)
+
+        val wrong = client.post("/v1/auth/verify-email") {
+            contentType(ContentType.Application.Json)
+            setBody(com.mango.backend.auth.VerifyEmailRequest(code, "boris@example.com"))
+        }
+        assertEquals(HttpStatusCode.BadRequest, wrong.status)
+
+        // Неудачная попытка с чужой почтой не сжигает код.
+        val right = client.post("/v1/auth/verify-email") {
+            contentType(ContentType.Application.Json)
+            setBody(com.mango.backend.auth.VerifyEmailRequest(code, anna))
+        }
+        assertEquals(HttpStatusCode.OK, right.status)
+    }
 }

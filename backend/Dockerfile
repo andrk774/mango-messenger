@@ -24,6 +24,7 @@ COPY messaging/build.gradle.kts messaging/
 COPY realtime/build.gradle.kts realtime/
 COPY tasks/build.gradle.kts tasks/
 COPY storage/build.gradle.kts storage/
+COPY notifications/build.gradle.kts notifications/
 COPY app/build.gradle.kts app/
 
 RUN chmod +x gradlew && \

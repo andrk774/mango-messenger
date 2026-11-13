@@ -100,8 +100,21 @@ object RateLimits {
     val LOGIN_WINDOW: Duration = Duration.ofMinutes(15)
 
     val REGISTER_LIMIT = 3
+
+    /** Для MANGO_ENV=LOCAL: домашняя сеть видна серверу одним адресом. */
+    val REGISTER_LIMIT_LOCAL = 30
     val REGISTER_WINDOW: Duration = Duration.ofHours(1)
 
     val PASSWORD_RESET_LIMIT = 3
     val PASSWORD_RESET_WINDOW: Duration = Duration.ofHours(1)
+
+    /**
+     * Проверка кода из письма (подтверждение адреса, смена пароля).
+     *
+     * Код короткий, чтобы его можно было перепечатать, — значит, число
+     * попыток обязано быть ограничено. Десять попыток за пятнадцать
+     * минут хватит на опечатки, но не на перебор.
+     */
+    val CODE_LIMIT = 10
+    val CODE_WINDOW: Duration = Duration.ofMinutes(15)
 }

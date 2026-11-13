@@ -21,7 +21,14 @@ data class RegisterRequest(
 )
 
 @Serializable
-data class VerifyEmailRequest(val token: String)
+data class VerifyEmailRequest(
+    val token: String,
+    /**
+     * Почта, которой выдан код. Обязательна: по ней считаются попытки
+     * (RateLimits.CODE_*), и код засчитывается только своей почте.
+     */
+    val email: String,
+)
 
 @Serializable
 data class LoginRequest(
@@ -44,7 +51,7 @@ data class RefreshRequest(val refreshToken: String)
 data class ForgotPasswordRequest(val email: String)
 
 @Serializable
-data class ResetPasswordRequest(val token: String, val newPassword: String)
+data class ResetPasswordRequest(val token: String, val newPassword: String, val email: String)
 
 @Serializable
 data class TokenPairResponse(

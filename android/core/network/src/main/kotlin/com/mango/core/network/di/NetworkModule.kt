@@ -28,7 +28,11 @@ import javax.inject.Singleton
  * На реальном устройстве значение нужно заменить на адрес машины
  * в локальной сети.
  */
-data class ServerConfig(val baseUrl: String) {
+data class ServerConfig(
+    val baseUrl: String,
+    /** Адрес сервера на случай, когда DNS телефона его не знает (VPN). См. FallbackDns. */
+    val fallbackIp: String? = null,
+) {
     companion object {
         const val EMULATOR_HOST = "http://10.0.2.2:8081/"
         const val WEBSOCKET_PATH = "v1/ws"
@@ -55,9 +59,8 @@ annotation class AuthenticatedClient
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
 
-    @Provides
-    @Singleton
-    fun provideServerConfig(): ServerConfig = ServerConfig(ServerConfig.EMULATOR_HOST)
+    // ServerConfig предоставляет модуль приложения: адрес сервера — настройка
+    // сборки (mango.serverUrl), а у библиотечных модулей BuildConfig выключен.
 
     @Provides
     @Singleton
@@ -73,7 +76,11 @@ object NetworkModule {
     @Provides
     @Singleton
     @PlainClient
-    fun provideBaseClient(logger: Logger): OkHttpClient = OkHttpClient.Builder()
+    fun provideBaseClient(logger: Logger, config: ServerConfig): OkHttpClient = OkHttpClient.Builder()
+        // Резервный адрес домашнего сервера, если DNS телефона идёт мимо
+        // роутера (VPN). От этого клиента строятся все остальные — API,
+        // WebSocket и передача файлов получают резерв одинаково.
+        .dns(com.mango.core.network.FallbackDns.forServer(config.baseUrl, config.fallbackIp))
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)

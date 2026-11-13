@@ -14,11 +14,17 @@ import java.net.UnknownHostException
  *
  * `ignoreUnknownKeys` обязателен: сервер может добавить поле раньше, чем
  * обновится приложение, и старый клиент не должен от этого ломаться.
+ *
+ * `encodeDefaults` обязателен: без него поле, равное значению по
+ * умолчанию, в запрос не попадает. Так `platform = "ANDROID"` молча
+ * пропадал из запроса входа, а сервер требует его обязательно —
+ * вход из приложения не работал, хотя все тесты проходили.
  */
 internal val NetworkJson: Json = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
     coerceInputValues = true
+    encodeDefaults = true
 }
 
 /**

@@ -322,6 +322,32 @@ class AuthRepository {
         now, tokenHash, purpose, now,
     ) { it.uuid("user_id") }
 
+    /**
+     * То же, но код засчитывается только пользователю с этой почтой.
+     *
+     * Попытки ввода считаются по почте; без этой привязки код, выданный
+     * одной почте, проверялся бы в счёт попыток другой.
+     */
+    fun consumeAuthTokenFor(
+        connection: Connection,
+        tokenHash: String,
+        purpose: AuthTokenPurpose,
+        email: String,
+        now: Instant,
+    ): UUID? = connection.queryOne(
+        """
+        UPDATE auth_tokens
+        SET used_at = ?
+        WHERE token_hash = ?
+          AND purpose = ?
+          AND used_at IS NULL
+          AND expires_at > ?
+          AND user_id = (SELECT id FROM users WHERE email = ? AND deleted_at IS NULL)
+        RETURNING user_id
+        """.trimIndent(),
+        now, tokenHash, purpose, now, email,
+    ) { it.uuid("user_id") }
+
     fun invalidateTokens(
         connection: Connection,
         userId: UUID,

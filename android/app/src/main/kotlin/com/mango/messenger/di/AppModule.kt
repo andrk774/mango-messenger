@@ -20,6 +20,21 @@ object AppModule {
      * инициализируется из Application и обязан существовать в одном
      * экземпляре на процесс.
      */
+    /**
+     * Адрес сервера из настройки сборки.
+     *
+     * По умолчанию — хост-машина для эмулятора. Для телефона в локальной
+     * сети: `-Pmango.serverUrl=https://mango.home.arpa/`
+     * (см. README, «Запуск в локальной сети»).
+     */
+    @Provides
+    @Singleton
+    fun provideServerConfig(): com.mango.core.network.di.ServerConfig =
+        com.mango.core.network.di.ServerConfig(
+            baseUrl = com.mango.messenger.BuildConfig.SERVER_URL,
+            fallbackIp = com.mango.messenger.BuildConfig.SERVER_FALLBACK_IP,
+        )
+
     @Provides
     @Singleton
     fun provideWorkManager(@ApplicationContext context: Context): WorkManager =

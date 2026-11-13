@@ -88,6 +88,7 @@ class SettingsViewModel @Inject constructor(
 
 @Composable
 fun SettingsScreen(
+    onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
@@ -104,6 +105,12 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
         ) {
             ProfileRow(state.currentUser)
+            androidx.compose.material3.TextButton(
+                onClick = onSignOut,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Выйти из аккаунта")
+            }
             HorizontalDivider()
 
             SectionHeader("Внешний вид")

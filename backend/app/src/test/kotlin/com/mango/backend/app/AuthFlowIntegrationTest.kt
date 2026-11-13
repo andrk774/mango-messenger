@@ -60,7 +60,7 @@ class AuthFlowIntegrationTest : IntegrationTestBase() {
         val token = mail.tokenFor(email)
         val verified = client.post("/v1/auth/verify-email") {
             contentType(ContentType.Application.Json)
-            setBody(VerifyEmailRequest(token))
+            setBody(VerifyEmailRequest(token, email))
         }
         assertEquals(HttpStatusCode.OK, verified.status)
 
@@ -118,6 +118,21 @@ class AuthFlowIntegrationTest : IntegrationTestBase() {
         assertTrue("email" in fields, "ожидалась ошибка по email, получено $fields")
         assertTrue("password" in fields, "ожидалась ошибка по password, получено $fields")
         assertTrue("username" in fields, "ожидалась ошибка по username, получено $fields")
+    }
+
+    @Test
+    fun `код из письма можно набрать вручную как угодно`() = withApp { client ->
+        client.register(email, password, "anna")
+
+        // Так код набирают с экрана компьютера на телефоне: строчными,
+        // без дефиса, с пробелами.
+        val typed = mail.tokenFor(email).replace("-", "").lowercase().chunked(5).joinToString(" ")
+        val verified = client.post("/v1/auth/verify-email") {
+            contentType(ContentType.Application.Json)
+            setBody(VerifyEmailRequest(typed, email))
+        }
+        assertEquals(HttpStatusCode.OK, verified.status)
+        assertEquals(HttpStatusCode.OK, client.login(email, password).status)
     }
 
     @Test
@@ -262,7 +277,7 @@ class AuthFlowIntegrationTest : IntegrationTestBase() {
         }
         client.post("/v1/auth/password/reset") {
             contentType(ContentType.Application.Json)
-            setBody(ResetPasswordRequest(mail.tokenFor(email), "ЕщёОдинДлинныйПароль-2026"))
+            setBody(ResetPasswordRequest(mail.tokenFor(email), "ЕщёОдинДлинныйПароль-2026", email))
         }
 
         assertEquals(
@@ -329,7 +344,7 @@ class AuthFlowIntegrationTest : IntegrationTestBase() {
 
         val reset = client.post("/v1/auth/password/reset") {
             contentType(ContentType.Application.Json)
-            setBody(ResetPasswordRequest(resetToken, newPassword))
+            setBody(ResetPasswordRequest(resetToken, newPassword, email))
         }
         assertEquals(HttpStatusCode.OK, reset.status)
 
@@ -370,7 +385,7 @@ class AuthFlowIntegrationTest : IntegrationTestBase() {
     private suspend fun HttpClient.verifyEmail(token: String) =
         post("/v1/auth/verify-email") {
             contentType(ContentType.Application.Json)
-            setBody(VerifyEmailRequest(token))
+            setBody(VerifyEmailRequest(token, email))
         }
 
     private suspend fun HttpClient.login(email: String, password: String): HttpResponse =

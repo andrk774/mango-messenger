@@ -52,8 +52,8 @@ class AuthRemoteDataSource @Inject constructor(private val api: AuthApi) {
         api.register(RegisterRequestDto(email, password, displayName, username))
     }.map { }
 
-    suspend fun verifyEmail(token: String): Outcome<Unit> =
-        apiCall { api.verifyEmail(VerifyEmailRequestDto(token)) }.map { }
+    suspend fun verifyEmail(email: String, token: String): Outcome<Unit> =
+        apiCall { api.verifyEmail(VerifyEmailRequestDto(token = token, email = email)) }.map { }
 
     suspend fun login(
         email: String,
@@ -75,10 +75,15 @@ class AuthRemoteDataSource @Inject constructor(private val api: AuthApi) {
     suspend fun forgotPassword(email: String): Outcome<Unit> =
         apiCall { api.forgotPassword(ForgotPasswordRequestDto(email)) }.map { }
 
-    suspend fun resetPassword(token: String, newPassword: String): Outcome<Unit> =
-        apiCall { api.resetPassword(ResetPasswordRequestDto(token, newPassword)) }.map { }
+    suspend fun resetPassword(email: String, token: String, newPassword: String): Outcome<Unit> =
+        apiCall { api.resetPassword(ResetPasswordRequestDto(token, newPassword, email)) }.map { }
 
     suspend fun me(): Outcome<CurrentUserDto> = apiCall { api.me() }
+
+    suspend fun registerPush(token: String): Outcome<Unit> =
+        apiCall { api.registerPush(com.mango.core.network.dto.RegisterPushTokenRequestDto("FCM", token)) }.map { }
+
+    suspend fun unregisterPush(): Outcome<Unit> = apiCall { api.unregisterPush() }.map { }
 }
 
 @Singleton

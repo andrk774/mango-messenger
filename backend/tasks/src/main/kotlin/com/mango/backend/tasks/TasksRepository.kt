@@ -204,6 +204,11 @@ class TasksRepository {
             params += if (field == "due_at" || field == "remind_at") value?.let(Instant::parse) else value
         }
 
+        if ("remind_at" in applied) {
+            // Перенесённое напоминание должно сработать снова (V003).
+            assignments += "reminded_at = NULL"
+        }
+
         if ("status" in applied) {
             // Время завершения выставляется сервером: клиенту здесь
             // доверять незачем, а для отчётов по срокам оно важно.

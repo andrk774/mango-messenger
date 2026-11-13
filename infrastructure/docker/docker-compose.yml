@@ -95,6 +95,9 @@ services:
       MANGO_SMTP_PORT: "1025"
       MANGO_JWT_SECRET: ${MANGO_JWT_SECRET:?нужно задать MANGO_JWT_SECRET в .env}
       MANGO_STORAGE_DIR: /data/attachments
+      # Ключ Firebase (см. README, «Push-уведомления»). Нет файла —
+      # сервер работает, push пишутся в журнал.
+      MANGO_FCM_CREDENTIALS_FILE: /run/secrets/mango/firebase-service-account.json
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8081}:8080"
     depends_on:
@@ -109,9 +112,31 @@ services:
     volumes:
       # Файлы вложений переживают пересоздание контейнера.
       - attachments:/data/attachments
+      # Каталог, а не файл: при отсутствии файла Docker создал бы
+      # на его месте пустой каталог, и сервер получил бы не ключ.
+      - ../../secrets:/run/secrets/mango:ro
+    restart: unless-stopped
+
+  # Вход из локальной сети по HTTPS (см. README, «Запуск в локальной сети»).
+  # Единственный сервис, открытый не только на этом компьютере.
+  caddy:
+    image: caddy:2.10-alpine
+    environment:
+      MANGO_DOMAIN: ${MANGO_DOMAIN:-mango.home.arpa}
+    ports:
+      - "${LAN_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Здесь живёт собственный ЦС. Пропажа тома = новый корневой
+      # сертификат, и приложение придётся пересобрать с ним.
+      - caddydata:/data
+    depends_on:
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   pgdata:
   redisdata:
   attachments:
+  caddydata:

@@ -19,6 +19,7 @@ data class AppConfig(
     val redis: RedisConfig,
     val mail: MailConfig,
     val storage: StorageConfig,
+    val push: PushConfig = PushConfig(credentialsFile = null),
 ) {
     enum class Environment { LOCAL, TEST, STAGING, PRODUCTION;
 
@@ -94,6 +95,11 @@ data class AppConfig(
                     from = env("MANGO_MAIL_FROM") ?: "noreply@mango.local",
                     enabled = env("MANGO_MAIL_ENABLED")?.toBooleanStrictOrNull() ?: true,
                 ),
+                push = PushConfig(
+                    // Ключ сервисного аккаунта Firebase. Не задан или файла
+                    // нет — push только записываются в журнал.
+                    credentialsFile = env("MANGO_FCM_CREDENTIALS_FILE")?.takeIf { it.isNotBlank() },
+                ),
                 storage = StorageConfig(
                     directory = env("MANGO_STORAGE_DIR") ?: "build/attachments",
                     // Отдельный ключ подписи ссылок можно задать явно; иначе
@@ -134,6 +140,9 @@ data class PasswordConfig(
 )
 
 data class RedisConfig(val url: String, val enabled: Boolean)
+
+/** Push-уведомления (ADR-0010). */
+data class PushConfig(val credentialsFile: String?)
 
 /**
  * Хранилище вложений.

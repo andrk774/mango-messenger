@@ -58,7 +58,11 @@ data class DeviceInfoDto(
 )
 
 @Serializable
-data class VerifyEmailRequestDto(val token: String)
+data class VerifyEmailRequestDto(
+    val token: String,
+    /** Почта, которой выдан код: по ней сервер считает попытки. */
+    val email: String,
+)
 
 @Serializable
 data class RefreshRequestDto(val refreshToken: String)
@@ -67,7 +71,7 @@ data class RefreshRequestDto(val refreshToken: String)
 data class ForgotPasswordRequestDto(val email: String)
 
 @Serializable
-data class ResetPasswordRequestDto(val token: String, val newPassword: String)
+data class ResetPasswordRequestDto(val token: String, val newPassword: String, val email: String)
 
 @Serializable
 data class TokenPairDto(
@@ -118,6 +122,9 @@ data class SendMessageRequestDto(
     val replyToId: String? = null,
     val attachmentIds: List<String> = emptyList(),
 )
+
+@Serializable
+data class RegisterPushTokenRequestDto(val provider: String, val token: String)
 
 @Serializable
 data class UpdateConversationRequestDto(val title: String)

@@ -39,7 +39,7 @@ data class AuthUiState(
             displayName.isNotBlank() && username.isNotBlank() && !isBusy
 
     val canSubmitVerification: Boolean
-        get() = verificationCode.isNotBlank() && !isBusy
+        get() = email.isNotBlank() && verificationCode.isNotBlank() && !isBusy
 }
 
 sealed interface AuthEvent {
@@ -98,8 +98,9 @@ class AuthViewModel @Inject constructor(
 
     fun verifyEmail() {
         val code = _uiState.value.verificationCode.trim()
+        val email = _uiState.value.email.trim()
         busy {
-            when (val result = authRepository.verifyEmail(code)) {
+            when (val result = authRepository.verifyEmail(email, code)) {
                 is Outcome.Success -> {
                     _uiState.update { it.copy(step = AuthStep.LOGIN, verificationCode = "") }
                     _events.emit(AuthEvent.Message("Адрес подтверждён, теперь войдите"))

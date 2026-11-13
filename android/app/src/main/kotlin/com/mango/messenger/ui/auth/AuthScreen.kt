@@ -208,13 +208,25 @@ private fun RegisterForm(state: AuthUiState, viewModel: AuthViewModel) {
 @Composable
 private fun VerifyForm(state: AuthUiState, viewModel: AuthViewModel) {
     Text(
-        text = "Введите код из письма. В локальной среде письма видны " +
-            "в Mailpit на порту 8026.",
+        text = "Введите адрес электронной почты и код из письма.",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
     )
     Spacer(Modifier.height(16.dp))
+
+    // Почта подставляется из формы регистрации или входа. Поле видно,
+    // чтобы её можно было поправить, если на экран пришли по ссылке
+    // «У меня есть код подтверждения».
+    MangoTextField(
+        value = state.email,
+        onValueChange = viewModel::onEmailChange,
+        label = "Электронная почта",
+        keyboardType = KeyboardType.Email,
+        errorMessage = state.fieldErrors["email"],
+        enabled = !state.isBusy,
+    )
+    Spacer(Modifier.height(12.dp))
 
     MangoTextField(
         value = state.verificationCode,

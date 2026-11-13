@@ -39,11 +39,14 @@ interface AuthRepository {
         username: String,
     ): Outcome<Unit>
 
-    suspend fun verifyEmail(token: String): Outcome<Unit>
+    suspend fun verifyEmail(email: String, token: String): Outcome<Unit>
 
     suspend fun login(email: String, password: String): Outcome<Unit>
 
     suspend fun logout(): Outcome<Unit>
+
+    /** Привязка push-токена к устройству текущей сессии. */
+    suspend fun registerPushToken(token: String): Outcome<Unit>
 
     suspend fun requestPasswordReset(email: String): Outcome<Unit>
 }
@@ -74,8 +77,8 @@ class DefaultAuthRepository @Inject constructor(
         remote.register(email, password, displayName, username)
     }
 
-    override suspend fun verifyEmail(token: String): Outcome<Unit> =
-        withContext(dispatchers.io) { remote.verifyEmail(token) }
+    override suspend fun verifyEmail(email: String, token: String): Outcome<Unit> =
+        withContext(dispatchers.io) { remote.verifyEmail(email.trim(), token) }
 
     /**
      * Вход.
@@ -138,9 +141,17 @@ class DefaultAuthRepository @Inject constructor(
      * оставаться доступной следующему, а неотправленные операции чужого
      * аккаунта не должны уехать под новой сессией.
      */
+    override suspend fun registerPushToken(token: String): Outcome<Unit> =
+        withContext(dispatchers.io) { remote.registerPush(token) }
+
     override suspend fun logout(): Outcome<Unit> = withContext(dispatchers.io) {
         // Отзыв сессии на сервере — попытка, а не условие: если сети нет,
         // выйти из приложения всё равно нужно.
+        // Токен push снимается первым: после выхода телефон не должен
+        // показывать уведомления о переписке этой учётной записи. Сервер
+        // и так не шлёт push на устройства без живой сессии — это вторая
+        // линия на случай, если отзыв сессии не дошёл.
+        remote.unregisterPush()
         remote.logout().let { result ->
             if (result is Outcome.Failure) {
                 logger.i(TAG, "сервер не подтвердил выход: ${result.error}")

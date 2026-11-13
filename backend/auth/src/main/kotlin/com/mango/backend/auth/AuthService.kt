@@ -130,15 +130,15 @@ class AuthService(
         }
     }
 
-    /** Подтверждение адреса по токену из письма. */
-    suspend fun verifyEmail(token: String) {
+    /** Подтверждение адреса по коду из письма, выданному этой почте. */
+    suspend fun verifyEmail(email: String, token: String) {
         val now = time.now()
-        val hash = tokens.hashRefreshToken(token)
+        val hash = tokens.hashOneTimeToken(token)
 
         database.transaction { connection ->
-            val userId = repository.consumeAuthToken(
-                connection, hash, AuthTokenPurpose.EMAIL_VERIFICATION, now,
-            ) ?: throw AppException.BadRequest("Ссылка недействительна или истекла")
+            val userId = repository.consumeAuthTokenFor(
+                connection, hash, AuthTokenPurpose.EMAIL_VERIFICATION, normalizeEmail(email), now,
+            ) ?: throw AppException.BadRequest("Код неверен или устарел")
 
             repository.markEmailVerified(connection, userId, now)
         }
@@ -392,7 +392,7 @@ class AuthService(
      * Все сессии отзываются: если доступ восстанавливают после кражи,
      * у злоумышленника не должно остаться действующего входа.
      */
-    suspend fun resetPassword(token: String, newPassword: String) {
+    suspend fun resetPassword(email: String, token: String, newPassword: String) {
         validate {
             check(
                 newPassword.length >= MIN_PASSWORD_LENGTH,
@@ -403,13 +403,13 @@ class AuthService(
         }
 
         val now = time.now()
-        val hash = tokens.hashRefreshToken(token)
+        val hash = tokens.hashOneTimeToken(token)
         val newHash = passwordHasher.hash(newPassword)
 
         database.transaction { connection ->
-            val userId = repository.consumeAuthToken(
-                connection, hash, AuthTokenPurpose.PASSWORD_RESET, now,
-            ) ?: throw AppException.BadRequest("Ссылка недействительна или истекла")
+            val userId = repository.consumeAuthTokenFor(
+                connection, hash, AuthTokenPurpose.PASSWORD_RESET, normalizeEmail(email), now,
+            ) ?: throw AppException.BadRequest("Код неверен или устарел")
 
             repository.updatePasswordHash(connection, userId, newHash, now)
             repository.revokeAllSessionsReturningIds(
@@ -419,6 +419,9 @@ class AuthService(
     }
 
     // ──────────────────────────── внутреннее ────────────────────────────
+
+    /** Почта хранится в нижнем регистре без пробелов — так же она и ищется. */
+    private fun normalizeEmail(email: String): String = email.trim().lowercase()
 
     private fun issueSession(
         connection: java.sql.Connection,

@@ -1,5 +1,13 @@
 package com.mango.backend.app
 
+import com.mango.backend.notifications.FcmPushProvider
+import com.mango.backend.notifications.LoggingPushProvider
+import com.mango.backend.notifications.PushProvider
+import com.mango.backend.notifications.PushRepository
+import com.mango.backend.notifications.PushService
+import com.mango.backend.notifications.PushingEventBus
+import com.mango.backend.notifications.ReminderScheduler
+import com.mango.backend.notifications.notificationsRoutes
 import com.mango.backend.storage.AttachmentService
 import com.mango.backend.storage.AttachmentsRepository
 import com.mango.backend.storage.FileSystemBlobStorage
@@ -17,6 +25,7 @@ import com.mango.backend.auth.TokenService
 import com.mango.backend.auth.authRoutes
 import com.mango.backend.common.ApiJson
 import com.mango.backend.common.AppConfig
+import com.mango.backend.common.RateLimits
 import com.mango.backend.common.Database
 import com.mango.backend.common.InMemoryRateLimiter
 import com.mango.backend.common.RedisRateLimiter
@@ -116,6 +125,8 @@ fun main() {
         LocalEventBus(hub)
     }
 
+    val pushProvider = pushProviderFor(config)
+
     val server = embeddedServer(
         factory = Netty,
         port = config.http.port,
@@ -129,6 +140,8 @@ fun main() {
             hub = hub,
             eventBus = eventBus,
             revocations = revocations,
+            pushProvider = pushProvider,
+            startBackgroundJobs = true,
         )
     }
 
@@ -166,6 +179,8 @@ fun Application.mangoModule(
     eventBus: EventBus = LocalEventBus(hub),
     wsAuthTimeoutMillis: Long = DEFAULT_AUTH_TIMEOUT_MILLIS,
     revocations: SessionRevocations = InMemorySessionRevocations(time),
+    pushProvider: PushProvider = LoggingPushProvider(),
+    startBackgroundJobs: Boolean = false,
 ) {
     val ids = UuidV7Generator()
     val tokenService = TokenService(config.jwt, time)
@@ -177,6 +192,18 @@ fun Application.mangoModule(
     // получит их при сверке по курсору.
     val eventLog = EventLog(time)
     val syncService = SyncService(database, eventLog)
+
+    // Push уходит после фиксации изменения, на том экземпляре, где оно
+    // произошло: шина событий оборачивается отправкой уведомлений.
+    val pushService = PushService(
+        database = database,
+        repository = PushRepository(),
+        authRepository = authRepository,
+        provider = pushProvider,
+        time = time,
+    )
+    val eventBus: EventBus = PushingEventBus(eventBus, pushService, this)
+    if (startBackgroundJobs) ReminderScheduler(pushService).start(this)
 
     val messagingRepository = MessagingRepository()
     val conversationService = ConversationService(
@@ -298,11 +325,43 @@ fun Application.mangoModule(
 
     routing {
         healthRoutes(database)
-        authRoutes(authService, database, authRepository, rateLimiter)
+        authRoutes(
+            authService,
+            database,
+            authRepository,
+            rateLimiter,
+            registerLimit = if (config.environment == AppConfig.Environment.LOCAL) {
+                RateLimits.REGISTER_LIMIT_LOCAL
+            } else {
+                RateLimits.REGISTER_LIMIT
+            },
+        )
         syncRoutes(syncService)
         messagingRoutes(conversationService, messageService)
         realtimeRoutes(hub, tokenService, syncService, wsAuthTimeoutMillis)
         tasksRoutes(taskService)
         attachmentsRoutes(attachmentService)
+        notificationsRoutes(pushService)
     }
+}
+
+/**
+ * Провайдер push по настройке.
+ *
+ * Отсутствие ключа Firebase — штатный режим разработки, а не ошибка:
+ * сервер работает, уведомления пишутся в журнал. Битый ключ — тоже не
+ * повод не запускаться: переписка важнее уведомлений.
+ */
+private fun pushProviderFor(config: AppConfig): PushProvider {
+    val path = config.push.credentialsFile?.let { java.nio.file.Path.of(it) }
+    if (path == null || !java.nio.file.Files.isRegularFile(path)) {
+        log.info("push: ключ Firebase не задан — уведомления только в журнале")
+        return LoggingPushProvider()
+    }
+    return runCatching { FcmPushProvider.fromFile(path) }
+        .onSuccess { log.info("push: FCM включён") }
+        .getOrElse {
+            log.error("push: ключ Firebase не прочитан ({}), уведомления только в журнале", it.message)
+            LoggingPushProvider()
+        }
 }

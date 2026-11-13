@@ -72,6 +72,12 @@ fun Route.authRoutes(
     database: Database,
     repository: AuthRepository,
     rateLimiter: RateLimiter,
+    /**
+     * Предел регистраций с одного адреса. В локальной среде выше: Docker
+     * Desktop показывает серверу все устройства домашней сети под одним
+     * адресом, и строгий предел делился бы на всех.
+     */
+    registerLimit: Int = RateLimits.REGISTER_LIMIT,
 ) {
     route("/v1/auth") {
 
@@ -79,7 +85,7 @@ fun Route.authRoutes(
             enforceLimit(
                 limiter = rateLimiter,
                 key = "register:${call.clientIp() ?: "unknown"}",
-                limit = RateLimits.REGISTER_LIMIT,
+                limit = registerLimit,
                 window = RateLimits.REGISTER_WINDOW,
             )
             val body = call.receive<RegisterRequest>()
@@ -101,7 +107,16 @@ fun Route.authRoutes(
 
         post("/verify-email") {
             val body = call.receive<VerifyEmailRequest>()
-            service.verifyEmail(body.token)
+            // Попытки — по почте: дома все устройства выходят в сеть под
+            // одним адресом, и счёт по адресу смешивал бы разных людей.
+            // Перебор кода к одной почте упирается в предел с любого адреса.
+            enforceLimit(
+                limiter = rateLimiter,
+                key = "code:${body.email.trim().lowercase()}",
+                limit = RateLimits.CODE_LIMIT,
+                window = RateLimits.CODE_WINDOW,
+            )
+            service.verifyEmail(body.email, body.token)
             call.respond(HttpStatusCode.OK, AcceptedResponse("Адрес подтверждён"))
         }
 
@@ -159,7 +174,13 @@ fun Route.authRoutes(
 
         post("/password/reset") {
             val body = call.receive<ResetPasswordRequest>()
-            service.resetPassword(body.token, body.newPassword)
+            enforceLimit(
+                limiter = rateLimiter,
+                key = "code:${body.email.trim().lowercase()}",
+                limit = RateLimits.CODE_LIMIT,
+                window = RateLimits.CODE_WINDOW,
+            )
+            service.resetPassword(body.email, body.token, body.newPassword)
             call.respond(
                 HttpStatusCode.OK,
                 AcceptedResponse("Пароль изменён, все сессии завершены"),
