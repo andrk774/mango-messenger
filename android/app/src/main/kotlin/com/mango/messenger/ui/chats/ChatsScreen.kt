@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.outlined.Chat
@@ -139,6 +140,10 @@ fun ChatsScreen(
             state = newChat,
             onQueryChange = viewModel::onPeopleQueryChange,
             onSelect = { viewModel.startChatWith(it.id) },
+            onToggleGroup = viewModel::toggleGroupMode,
+            onGroupTitleChange = viewModel::onGroupTitleChange,
+            onToggleSelected = viewModel::toggleSelected,
+            onCreateGroup = viewModel::createGroup,
             onDismiss = viewModel::closeNewChat,
         )
     }
@@ -185,13 +190,36 @@ private fun NewChatDialog(
     state: NewChatUiState,
     onQueryChange: (String) -> Unit,
     onSelect: (com.mango.core.model.User) -> Unit,
+    onToggleGroup: () -> Unit,
+    onGroupTitleChange: (String) -> Unit,
+    onToggleSelected: (com.mango.core.model.User) -> Unit,
+    onCreateGroup: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Новая переписка") },
+        title = { Text(if (state.isGroup) "Новая группа" else "Новая переписка") },
         text = {
             Column {
+                if (state.isGroup) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = state.groupTitle,
+                        onValueChange = onGroupTitleChange,
+                        label = { Text("Название группы") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (state.selected.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "Участники: " + state.selected.joinToString(", ") { it.displayName },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 MangoSearchBar(
                     query = state.query,
                     onQueryChange = onQueryChange,
@@ -200,7 +228,7 @@ private fun NewChatDialog(
                 Spacer(Modifier.height(12.dp))
 
                 when {
-                    state.isSearching -> PagingFooterLoading()
+                    state.isSearching || state.isCreating -> PagingFooterLoading()
 
                     state.hint != null -> Text(
                         text = state.hint,
@@ -210,12 +238,13 @@ private fun NewChatDialog(
 
                     else -> LazyColumn(Modifier.heightIn(max = 320.dp)) {
                         items(items = state.results, key = { it.id.value }) { user ->
+                            val chosen = state.selected.any { it.id == user.id }
                             MemberListItem(
                                 displayName = user.displayName,
                                 initials = user.initials,
-                                roleLabel = "@${'$'}{user.username}",
+                                roleLabel = if (chosen) "✓ выбран" else "@${'$'}{user.username}",
                                 avatarUrl = user.avatarUrl,
-                                onClick = { onSelect(user) },
+                                onClick = { if (state.isGroup) onToggleSelected(user) else onSelect(user) },
                             )
                             HorizontalDivider(Modifier.padding(start = 68.dp))
                         }
@@ -224,7 +253,17 @@ private fun NewChatDialog(
             }
         },
         confirmButton = {
-            MangoTextButton(text = "Закрыть", onClick = onDismiss)
+            if (state.isGroup) {
+                MangoTextButton(text = "Создать", onClick = onCreateGroup, enabled = state.canCreateGroup)
+            } else {
+                MangoTextButton(text = "Закрыть", onClick = onDismiss)
+            }
+        },
+        dismissButton = {
+            MangoTextButton(
+                text = if (state.isGroup) "Личная переписка" else "Создать группу",
+                onClick = onToggleGroup,
+            )
         },
     )
 }
@@ -237,7 +276,7 @@ private fun com.mango.core.model.MessagePreview.previewText(): String = when {
         com.mango.core.model.MessageType.VIDEO -> "Видео"
         com.mango.core.model.MessageType.VOICE -> "Голосовое сообщение"
         com.mango.core.model.MessageType.FILE -> "Файл"
-        com.mango.core.model.MessageType.SYSTEM -> "Системное сообщение"
+        com.mango.core.model.MessageType.SYSTEM -> com.mango.messenger.ui.format.SystemEventFormatter.text(system)
         com.mango.core.model.MessageType.TEXT -> "Пустое сообщение"
     }
 }

@@ -49,6 +49,10 @@ object DatabaseModule {
     fun provideOutboxDao(database: MangoDatabase): OutboxDao = database.outboxDao()
 
     @Provides
+    fun provideAttachmentDao(database: MangoDatabase): com.mango.core.database.dao.AttachmentDao =
+        database.attachmentDao()
+
+    @Provides
     fun provideNotificationDao(database: MangoDatabase): NotificationDao =
         database.notificationDao()
 }

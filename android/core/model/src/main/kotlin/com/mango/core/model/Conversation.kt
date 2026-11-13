@@ -18,6 +18,8 @@ data class Conversation(
     val lastEventSeq: Long = 0,
     val draft: String? = null,
     val updatedAt: Instant,
+    /** Своя роль: от неё зависит, какие действия с группой показывать. */
+    val myRole: MemberRole? = null,
 ) {
     val isMuted: Boolean
         get() = mutedUntil?.isAfter(Instant.now()) == true
@@ -35,6 +37,7 @@ data class MessagePreview(
     val createdAt: Instant,
     val deliveryStatus: MessageDeliveryStatus,
     val isDeleted: Boolean = false,
+    val system: SystemEvent? = null,
 )
 
 data class ConversationMember(

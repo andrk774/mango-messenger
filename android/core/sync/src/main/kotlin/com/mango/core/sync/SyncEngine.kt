@@ -9,6 +9,7 @@ import com.mango.core.database.MangoDatabase
 import com.mango.core.database.entity.SyncStateEntity
 import com.mango.core.network.CURSOR_TOO_OLD
 import com.mango.core.network.SyncRemoteDataSource
+import com.mango.core.network.TasksRemoteDataSource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -33,6 +34,7 @@ data class CatchUpResult(
 class SyncEngine @Inject constructor(
     private val database: MangoDatabase,
     private val remote: SyncRemoteDataSource,
+    private val tasksRemote: TasksRemoteDataSource,
     private val applier: EventApplier,
     private val logger: Logger,
 ) {
@@ -119,7 +121,7 @@ class SyncEngine @Inject constructor(
 
         database.withTransaction {
             body.items.forEach { conversation ->
-                conversationDao.upsert(conversation.toEntity())
+                conversationDao.upsertFromServer(conversation.toEntity())
                 conversation.lastMessage?.let { message ->
                     applier.rememberUser(message.senderId, message.senderName, null)
                     database.messageDao().upsert(message.toEntity())
@@ -137,7 +139,36 @@ class SyncEngine @Inject constructor(
         }
 
         logger.i(TAG, "первичная загрузка: ${body.items.size} чатов, курсор ${body.lastEventId}")
+        // Задачи загружаются вместе с чатами: иначе после входа на новом
+        // устройстве раздел задач был бы пуст до первого события.
+        refreshTasks()
+
         return Outcome.Success(body.items.size)
+    }
+
+    /**
+     * Загрузка задач с сервера.
+     *
+     * Применяется тем же кодом, что и события журнала, поэтому
+     * неотправленные локальные правки не затираются серверной версией.
+     *
+     * Загружаются обе области — «мои» и «команда»: вместе они покрывают
+     * всё, что пользователь вправе видеть. Завершённые включены, чтобы
+     * локальная копия не расходилась с сервером по статусам.
+     */
+    suspend fun refreshTasks(): Outcome<Int> {
+        var loaded = 0
+        for (scope in listOf("mine", "team")) {
+            when (val response = tasksRemote.tasks(scope = scope, includeCompleted = true)) {
+                is Outcome.Failure -> return if (loaded > 0) Outcome.Success(loaded) else response
+                is Outcome.Success -> {
+                    response.value.items.forEach { applier.applyServerTask(it) }
+                    loaded += response.value.items.size
+                }
+            }
+        }
+        logger.i(TAG, "загружено задач: $loaded")
+        return Outcome.Success(loaded)
     }
 
     private suspend fun markResetRequired() {

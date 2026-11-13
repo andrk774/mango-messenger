@@ -12,6 +12,7 @@ import com.mango.core.model.ConversationId
 import com.mango.core.model.User
 import com.mango.core.model.UserId
 import com.mango.messenger.ui.tasks.toUserMessage
+import com.mango.messenger.ui.tasks.toOnlineOnlyMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -45,7 +46,15 @@ data class NewChatUiState(
     val results: List<User> = emptyList(),
     val isSearching: Boolean = false,
     val hint: String? = null,
-)
+    /** Режим создания группы: выбор нескольких людей и название. */
+    val isGroup: Boolean = false,
+    val groupTitle: String = "",
+    val selected: List<User> = emptyList(),
+    val isCreating: Boolean = false,
+) {
+    val canCreateGroup: Boolean
+        get() = isGroup && groupTitle.isNotBlank() && selected.isNotEmpty() && !isCreating
+}
 
 sealed interface ChatsEvent {
     data class Message(val text: String) : ChatsEvent
@@ -174,7 +183,47 @@ class ChatsViewModel @Inject constructor(
                 }
 
                 is Outcome.Failure -> _newChat.value = _newChat.value.copy(
-                    hint = result.error.toUserMessage(),
+                    hint = result.error.toOnlineOnlyMessage(),
+                )
+            }
+        }
+    }
+
+    // ─────────────────────────── новая группа ───────────────────────────
+
+    fun toggleGroupMode() {
+        val current = _newChat.value
+        _newChat.value = current.copy(isGroup = !current.isGroup, selected = emptyList(), hint = null)
+    }
+
+    fun onGroupTitleChange(title: String) {
+        _newChat.value = _newChat.value.copy(groupTitle = title.take(128))
+    }
+
+    fun toggleSelected(user: User) {
+        val current = _newChat.value
+        val selected = if (current.selected.any { it.id == user.id }) {
+            current.selected.filterNot { it.id == user.id }
+        } else {
+            current.selected + user
+        }
+        _newChat.value = current.copy(selected = selected)
+    }
+
+    /** Группу создаёт сервер: только он назначает владельца и проверяет участников. */
+    fun createGroup() {
+        val state = _newChat.value
+        if (!state.canCreateGroup) return
+        viewModelScope.launch {
+            _newChat.value = state.copy(isCreating = true, hint = null)
+            when (val result = conversationRepository.createGroup(state.groupTitle, state.selected.map { it.id })) {
+                is Outcome.Success -> {
+                    closeNewChat()
+                    _events.emit(ChatsEvent.OpenConversation(result.value))
+                }
+                is Outcome.Failure -> _newChat.value = _newChat.value.copy(
+                    isCreating = false,
+                    hint = result.error.toOnlineOnlyMessage(),
                 )
             }
         }

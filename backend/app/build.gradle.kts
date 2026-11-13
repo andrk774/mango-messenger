@@ -11,6 +11,8 @@ dependencies {
     implementation(projects.sync)
     implementation(projects.messaging)
     implementation(projects.realtime)
+    implementation(projects.tasks)
+    implementation(projects.storage)
 
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
@@ -45,4 +47,14 @@ application {
 tasks.named<JavaExec>("run") {
     // Локальный запуск читает .env-подобные переменные из окружения оболочки.
     systemProperty("io.ktor.development", "true")
+}
+
+tasks.named<Test>("test") {
+    // Контрактный тест читает спецификацию API из общей документации.
+    // Без явного входа правка спецификации не перезапускала бы тесты:
+    // Gradle считал бы результат актуальным. В образе Docker каталога
+    // docs нет, поэтому вход объявлен коллекцией — отсутствие не ошибка.
+    inputs.files(rootProject.file("../docs/api/openapi.yaml"))
+        .withPropertyName("openApiSpec")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }

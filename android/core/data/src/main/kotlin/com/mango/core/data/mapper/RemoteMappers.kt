@@ -33,7 +33,8 @@ fun MessageDto.toEntity(): MessageEntity = MessageEntity(
     clientMsgId = clientMsgId,
     seq = seq,
     type = runCatching { MessageType.valueOf(type) }.getOrDefault(MessageType.TEXT),
-    body = body,
+    // Системное сообщение хранит структуру события в body (см. SystemEventCodec).
+    body = system?.let(SystemEventCodec::encode) ?: body,
     replyToId = replyTo?.messageId,
     replyToSenderName = replyTo?.senderName,
     replyToSnapshot = replyTo?.textSnapshot,

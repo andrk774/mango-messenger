@@ -23,4 +23,5 @@ dependencies {
 
     testImplementation(projects.core.testing)
     testImplementation(libs.robolectric)
+    testImplementation(libs.okhttp)
 }

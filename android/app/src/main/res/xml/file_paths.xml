@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Каталоги, из которых FileProvider может выдавать файлы. Только вложения. -->
+<paths>
+    <files-path name="outgoing" path="attachments/outgoing/" />
+    <cache-path name="downloads" path="attachments/" />
+</paths>

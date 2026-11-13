@@ -116,6 +116,41 @@ data class SendMessageRequestDto(
     val type: String = "TEXT",
     val body: String? = null,
     val replyToId: String? = null,
+    val attachmentIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class UpdateConversationRequestDto(val title: String)
+
+@Serializable
+data class AddMembersRequestDto(val userIds: List<String>)
+
+@Serializable
+data class ChangeRoleRequestDto(val role: String)
+
+@Serializable
+data class AttachmentDto(
+    val id: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val fileName: String = "",
+    val width: Int? = null,
+    val height: Int? = null,
+    val durationMs: Long? = null,
+)
+
+@Serializable
+data class SystemTargetDto(val userId: String, val name: String = "")
+
+/** Структура системного сообщения; текст собирается на устройстве. */
+@Serializable
+data class SystemEventDto(
+    val kind: String,
+    val actorId: String,
+    val actorName: String = "",
+    val targets: List<SystemTargetDto> = emptyList(),
+    val title: String? = null,
+    val role: String? = null,
 )
 
 @Serializable
@@ -147,6 +182,8 @@ data class MessageDto(
     val deletedAt: Instant? = null,
     val pinnedAt: Instant? = null,
     val createdAt: Instant,
+    val attachments: List<AttachmentDto> = emptyList(),
+    val system: SystemEventDto? = null,
 )
 
 @Serializable
@@ -254,6 +291,48 @@ data class MessageDeletedPayloadDto(
 
 @Serializable
 data class ConversationCreatedPayloadDto(val conversation: ConversationDto)
+
+@Serializable
+data class MembersAddedPayloadDto(val conversationId: String, val members: List<MemberDto>)
+
+@Serializable
+data class MemberRemovedPayloadDto(val conversationId: String, val userId: String)
+
+@Serializable
+data class MemberUpdatedPayloadDto(val conversationId: String, val member: MemberDto)
+
+// ─────────────────────────── вложения ───────────────────────────
+
+@Serializable
+data class UploadTicketRequestDto(
+    val attachmentId: String,
+    val conversationId: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val checksumSha256: String,
+    val fileName: String = "",
+    val width: Int? = null,
+    val height: Int? = null,
+    val durationMs: Long? = null,
+)
+
+@Serializable
+data class UploadTicketDto(
+    val attachmentId: String,
+    /** Относительная (от адреса API) или абсолютная ссылка для PUT. */
+    val uploadUrl: String,
+    val expiresAt: Instant,
+    val uploaded: Boolean = false,
+)
+
+@Serializable
+data class DownloadUrlDto(
+    val url: String,
+    val expiresAt: Instant,
+    val mimeType: String = "",
+    val sizeBytes: Long = 0,
+    val fileName: String = "",
+)
 
 @Serializable
 data class ReadMarkerPayloadDto(

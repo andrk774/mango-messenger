@@ -53,15 +53,12 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # Объектное хранилище (вложения) — Этап 6.
+  # Объектного хранилища в стеке нет — см. ADR-0019.
   #
-  # Сервис СОЗНАТЕЛЬНО отсутствует: образы MinIO перестали быть доступны
-  # для анонимной загрузки и с Docker Hub, и с quay.io (проверено
-  # 12.11.2026: Hub отдаёт 404 на репозиторий, quay — 401).
-  # Выбор S3-совместимого хранилища (SeaweedFS, Zenko CloudServer либо
-  # MinIO с учётной записью) делается на Этапе 6, когда появятся вложения.
-  # Добавлять нерабочий сервис сейчас означало бы ломать запуск стека
-  # ради функции, которой ещё нет.
+  # Образы MinIO недоступны для анонимной загрузки (проверено
+  # 12.11.2026). Вложения хранятся в томе `attachments` за интерфейсом
+  # BlobStorage; переход на S3-совместимое хранилище — замена реализации,
+  # клиенты при этом не меняются.
 
   mailpit:
     # Перехватывает ВСЕ исходящие письма и показывает их в веб-интерфейсе.
@@ -97,6 +94,7 @@ services:
       MANGO_SMTP_HOST: mailpit
       MANGO_SMTP_PORT: "1025"
       MANGO_JWT_SECRET: ${MANGO_JWT_SECRET:?нужно задать MANGO_JWT_SECRET в .env}
+      MANGO_STORAGE_DIR: /data/attachments
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8081}:8080"
     depends_on:
@@ -108,8 +106,12 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+    volumes:
+      # Файлы вложений переживают пересоздание контейнера.
+      - attachments:/data/attachments
     restart: unless-stopped
 
 volumes:
   pgdata:
   redisdata:
+  attachments:

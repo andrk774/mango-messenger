@@ -9,6 +9,7 @@ import com.mango.core.common.Outcome
 import com.mango.core.common.Redact
 import com.mango.core.common.TimeProvider
 import com.mango.core.data.mapper.senderEntity
+import com.mango.core.data.mapper.storeServerAttachments
 import com.mango.core.data.mapper.toDomain
 import com.mango.core.data.mapper.toEntity
 import com.mango.core.data.mapper.toDomainReactions
@@ -51,6 +52,8 @@ import javax.inject.Singleton
 class DefaultMessageRepository @Inject constructor(
     private val database: MangoDatabase,
     private val remote: MessagingRemoteDataSource,
+    private val attachmentsRemote: com.mango.core.network.AttachmentsRemoteDataSource,
+    private val files: com.mango.core.data.attachment.AttachmentFileStore,
     private val idGenerator: IdGenerator,
     private val time: TimeProvider,
     private val dispatchers: DispatcherProvider,
@@ -60,24 +63,32 @@ class DefaultMessageRepository @Inject constructor(
     private val messageDao = database.messageDao()
     private val outboxDao = database.outboxDao()
     private val userDao = database.userDao()
+    private val attachmentDao = database.attachmentDao()
 
     override fun observeRecentMessages(
         conversationId: ConversationId,
         limit: Int,
     ): Flow<List<Message>> =
-        messageDao.observeRecent(conversationId.value, limit)
-            .combine(userDao.observeCurrentUser()) { entities, me ->
-                val currentUserId = me?.id.orEmpty()
-                val reactions = messageDao.reactionsFor(entities.map { it.id })
-                    .groupBy { it.messageId }
-                entities.map { entity ->
-                    entity.toDomain(
-                        reactions = reactions[entity.id]
-                            ?.toDomainReactions(currentUserId)
-                            .orEmpty(),
-                    )
-                }
+        combine(
+            messageDao.observeRecent(conversationId.value, limit),
+            userDao.observeCurrentUser(),
+            // Отдельный поток вложений: прогресс загрузки меняет только
+            // таблицу вложений, и без него полоса прогресса стояла бы на месте.
+            attachmentDao.observeForConversation(conversationId.value),
+        ) { entities, me, attachments ->
+            val currentUserId = me?.id.orEmpty()
+            val reactions = messageDao.reactionsFor(entities.map { it.id })
+                .groupBy { it.messageId }
+            val byMessage = attachments.groupBy { it.messageId }
+            entities.map { entity ->
+                entity.toDomain(
+                    reactions = reactions[entity.id]
+                        ?.toDomainReactions(currentUserId)
+                        .orEmpty(),
+                    attachments = byMessage[entity.id].orEmpty().map { it.toDomain() },
+                )
             }
+        }
 
     override fun observePinnedMessages(conversationId: ConversationId): Flow<List<Message>> =
         messageDao.observePinned(conversationId.value).map { list -> list.map { it.toDomain() } }
@@ -168,6 +179,155 @@ class DefaultMessageRepository @Inject constructor(
             },
         )
     }
+
+    override suspend fun sendAttachment(
+        conversationId: ConversationId,
+        uri: android.net.Uri,
+        caption: String?,
+    ): Outcome<ClientOpId> = withContext(dispatchers.io) {
+        val senderId = userDao.currentUserId()
+            ?: return@withContext Outcome.Failure(AppError.Unauthorized)
+
+        val attachmentId = idGenerator.newId()
+        val imported = try {
+            files.import(uri, attachmentId)
+        } catch (e: com.mango.core.data.attachment.AttachmentRejected) {
+            return@withContext Outcome.Failure(AppError.Validation(mapOf("file" to (e.message ?: "Файл не подходит"))))
+        } catch (e: Exception) {
+            logger.e(TAG, "не удалось подготовить файл: ${Redact.text(e.message)}", e)
+            return@withContext Outcome.Failure(AppError.Storage(e))
+        }
+
+        val type = when {
+            imported.mimeType.startsWith("image/") -> MessageType.IMAGE
+            imported.mimeType.startsWith("video/") -> MessageType.VIDEO
+            imported.mimeType.startsWith("audio/") -> MessageType.VOICE
+            else -> MessageType.FILE
+        }
+        val text = caption?.trim()?.takeIf { it.isNotEmpty() }
+        val clientOpId = idGenerator.newId()
+        val uploadOpId = idGenerator.newId()
+        val now = time.nowMillis()
+
+        runCatching {
+            database.withTransaction {
+                messageDao.insertIgnore(
+                    MessageEntity(
+                        id = clientOpId,
+                        conversationId = conversationId.value,
+                        senderId = senderId,
+                        clientMsgId = clientOpId,
+                        seq = null,
+                        type = type,
+                        body = text,
+                        replyToId = null,
+                        replyToSenderName = null,
+                        replyToSnapshot = null,
+                        forwardedFromId = null,
+                        forwardedFromSenderName = null,
+                        deliveryStatus = MessageDeliveryStatus.PENDING,
+                        syncStatus = SyncStatus.PENDING,
+                        pinnedAt = null,
+                        editedAt = null,
+                        deletedAt = null,
+                        createdAt = now,
+                    ),
+                )
+                attachmentDao.upsert(
+                    com.mango.core.database.entity.AttachmentEntity(
+                        id = attachmentId,
+                        messageId = clientOpId,
+                        taskId = null,
+                        mimeType = imported.mimeType,
+                        sizeBytes = imported.sizeBytes,
+                        fileName = imported.fileName,
+                        remoteUrl = null,
+                        localUri = imported.file.path,
+                        width = imported.width,
+                        height = imported.height,
+                        durationMs = null,
+                        uploadProgress = 0f,
+                        syncStatus = SyncStatus.PENDING,
+                        createdAt = now,
+                    ),
+                )
+                outboxDao.enqueue(
+                    outboxOperation(
+                        clientOpId = uploadOpId,
+                        opType = OpType.UPLOAD_ATTACHMENT,
+                        entityType = EntityType.ATTACHMENT,
+                        entityId = attachmentId,
+                        payloadJson = OutboxJson.encodeToString(
+                            com.mango.core.data.outbox.UploadAttachmentPayload(
+                                attachmentId = attachmentId,
+                                conversationId = conversationId.value,
+                                localPath = imported.file.path,
+                                mimeType = imported.mimeType,
+                                sizeBytes = imported.sizeBytes,
+                                sha256 = imported.sha256,
+                                fileName = imported.fileName,
+                                width = imported.width,
+                                height = imported.height,
+                            ),
+                        ),
+                        nowMillis = now,
+                    ),
+                )
+                // Сообщение уходит только после загрузки файла: сервер
+                // не примет ссылку на вложение, которого у него ещё нет.
+                outboxDao.enqueue(
+                    outboxOperation(
+                        clientOpId = clientOpId,
+                        opType = OpType.SEND_MESSAGE,
+                        entityType = EntityType.MESSAGE,
+                        entityId = clientOpId,
+                        payloadJson = OutboxJson.encodeToString(
+                            SendMessagePayload(
+                                conversationId = conversationId.value,
+                                clientMsgId = clientOpId,
+                                text = text,
+                                type = type.name,
+                                attachmentIds = listOf(attachmentId),
+                            ),
+                        ),
+                        nowMillis = now,
+                        dependsOnOpId = uploadOpId,
+                    ),
+                )
+            }
+        }.fold(
+            onSuccess = { Outcome.Success(ClientOpId(clientOpId)) },
+            onFailure = { throwable ->
+                imported.file.delete()
+                logger.e(TAG, "не удалось поставить файл в очередь: ${Redact.text(throwable.message)}", throwable)
+                Outcome.Failure(AppError.Storage(throwable))
+            },
+        )
+    }
+
+    override suspend fun attachmentFile(id: com.mango.core.model.AttachmentId): Outcome<java.io.File> =
+        withContext(dispatchers.io) {
+            val entity = attachmentDao.findById(id.value)
+                ?: return@withContext Outcome.Failure(AppError.NotFound("attachment"))
+
+            entity.localUri?.let { java.io.File(it) }?.takeIf { it.isFile }?.let {
+                return@withContext Outcome.Success(it)
+            }
+
+            when (val link = attachmentsRemote.downloadUrl(id.value)) {
+                is Outcome.Failure -> link
+                is Outcome.Success -> {
+                    val target = files.downloadTarget(id.value, entity.fileName)
+                    when (val downloaded = attachmentsRemote.download(link.value.url, target)) {
+                        is Outcome.Failure -> downloaded
+                        is Outcome.Success -> {
+                            attachmentDao.setLocalUri(id.value, downloaded.value.path)
+                            downloaded
+                        }
+                    }
+                }
+            }
+        }
 
     override suspend fun retry(clientOpId: ClientOpId): Outcome<Unit> =
         withContext(dispatchers.io) {
@@ -343,6 +503,7 @@ class DefaultMessageRepository @Inject constructor(
                                 userDao.upsert(senderEntity(dto.senderId, dto.senderName, null))
                             }
                             messageDao.upsert(dto.toEntity())
+                            database.storeServerAttachments(dto, time.nowMillis())
                         }
                     }
                     response.value.items.size

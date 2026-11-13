@@ -46,6 +46,8 @@ fun Application.configureErrorHandling(config: AppConfig) {
                 is AppException.NotFound -> HttpStatusCode.NotFound
                 is AppException.Conflict -> HttpStatusCode.Conflict
                 is AppException.Validation -> HttpStatusCode.UnprocessableEntity
+                is AppException.PayloadTooLarge -> HttpStatusCode.PayloadTooLarge
+                is AppException.UnsupportedMediaType -> HttpStatusCode.UnsupportedMediaType
                 is AppException.RateLimited -> HttpStatusCode.TooManyRequests
                 is AppException.Unavailable -> HttpStatusCode.ServiceUnavailable
                 is AppException.Internal -> HttpStatusCode.InternalServerError

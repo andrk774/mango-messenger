@@ -92,6 +92,19 @@ class OfflineSendTest {
         messageRepository = DefaultMessageRepository(
             database = database,
             remote = offlineRemote(),
+            attachmentsRemote = com.mango.core.network.AttachmentsRemoteDataSource(
+                object : com.mango.core.network.api.AttachmentsApi {
+                    override suspend fun uploadTicket(body: com.mango.core.network.dto.UploadTicketRequestDto) =
+                        throw java.io.IOException("нет сети")
+                    override suspend fun downloadUrl(id: String) = throw java.io.IOException("нет сети")
+                },
+                object : com.mango.core.network.api.BlobTransferApi {
+                    override suspend fun upload(url: String, body: okhttp3.RequestBody) =
+                        throw java.io.IOException("нет сети")
+                    override suspend fun download(url: String) = throw java.io.IOException("нет сети")
+                },
+            ),
+            files = com.mango.core.data.attachment.AttachmentFileStore(ApplicationProvider.getApplicationContext()),
             idGenerator = idGenerator,
             time = time,
             dispatchers = testDispatchers,
@@ -448,6 +461,10 @@ class OfflineSendTest {
                 override suspend fun createConversation(body: CreateConversationRequestDto) = fail()
                 override suspend fun conversation(id: String) = fail()
                 override suspend fun members(id: String) = fail()
+                override suspend fun renameConversation(id: String, body: com.mango.core.network.dto.UpdateConversationRequestDto) = fail()
+                override suspend fun addMembers(id: String, body: com.mango.core.network.dto.AddMembersRequestDto) = fail()
+                override suspend fun removeMember(id: String, userId: String) = fail()
+                override suspend fun changeRole(id: String, userId: String, body: com.mango.core.network.dto.ChangeRoleRequestDto) = fail()
                 override suspend fun markRead(id: String, body: MarkReadRequestDto) = fail()
                 override suspend fun messages(
                     id: String,

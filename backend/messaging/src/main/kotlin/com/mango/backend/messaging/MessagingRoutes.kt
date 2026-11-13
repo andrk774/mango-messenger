@@ -56,6 +56,35 @@ fun Route.messagingRoutes(
                 call.respond(conversations.members(caller.userId, pathUuid("conversationId")))
             }
 
+            patch("/{conversationId}") {
+                val caller = callerIdentity()
+                val body = call.receive<UpdateConversationRequest>()
+                call.respond(conversations.rename(caller.userId, pathUuid("conversationId"), body.title))
+            }
+
+            post("/{conversationId}/members") {
+                val caller = callerIdentity()
+                val body = call.receive<AddMembersRequest>()
+                call.respond(conversations.addMembers(caller.userId, pathUuid("conversationId"), body))
+            }
+
+            // Удаление участника; свой идентификатор в пути — выход из группы.
+            delete("/{conversationId}/members/{userId}") {
+                val caller = callerIdentity()
+                conversations.removeMember(caller.userId, pathUuid("conversationId"), pathUuid("userId"))
+                call.respond(HttpStatusCode.NoContent)
+            }
+
+            put("/{conversationId}/members/{userId}/role") {
+                val caller = callerIdentity()
+                val body = call.receive<ChangeRoleRequest>()
+                call.respond(
+                    conversations.changeRole(
+                        caller.userId, pathUuid("conversationId"), pathUuid("userId"), body.role,
+                    ),
+                )
+            }
+
             put("/{conversationId}/read") {
                 val caller = callerIdentity()
                 val body = call.receive<MarkReadRequest>()

@@ -1,17 +1,25 @@
 package com.mango.messenger.ui.conversation
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -19,9 +27,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -33,21 +47,36 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import com.mango.core.designsystem.component.ConversationTopAppBar
 import com.mango.core.designsystem.component.EmptyState
 import com.mango.core.designsystem.component.MessageBubble
 import com.mango.core.designsystem.component.ReactionChipData
+import com.mango.core.model.Attachment
 import com.mango.core.model.Message
+import com.mango.core.model.MessageType
+import com.mango.core.model.SyncStatus
 import com.mango.core.model.UserId
 import com.mango.messenger.ui.chats.initials
+import com.mango.messenger.ui.format.FileSizeFormatter
+import com.mango.messenger.ui.format.SystemEventFormatter
 import com.mango.messenger.ui.format.TimeFormatters
+import java.io.File
 
 /**
  * Экран переписки.
@@ -59,17 +88,29 @@ import com.mango.messenger.ui.format.TimeFormatters
 @Composable
 fun ConversationScreen(
     onNavigateBack: () -> Unit,
+    onOpenInfo: (String) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ConversationViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
+    val context = LocalContext.current
+
+    // Системный выбор файла: приложению не нужно разрешение на чтение
+    // всего хранилища — доступ даётся только к выбранному файлу.
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(viewModel::sendAttachment)
+    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
                 is ConversationEvent.Message -> snackbarHostState.showSnackbar(event.text)
+                is ConversationEvent.OpenFile -> {
+                    val opened = openFile(context, event.file, event.mimeType)
+                    if (!opened) snackbarHostState.showSnackbar("Нет приложения, чтобы открыть этот файл")
+                }
             }
         }
     }
@@ -105,11 +146,18 @@ fun ConversationScreen(
                 avatarUrl = state.conversation?.avatarUrl,
                 statusLine = when {
                     state.hasUnsent -> "${state.pendingOperations} в очереди отправки"
-                    state.conversation?.memberCount?.let { it > 2 } == true ->
-                        "${state.conversation?.memberCount} участников"
+                    state.isGroup -> "${state.conversation?.memberCount ?: 0} участников"
                     else -> null
                 },
                 onNavigateBack = onNavigateBack,
+                onTitleClick = if (state.isGroup) ({ onOpenInfo(state.conversationId) }) else null,
+                actions = {
+                    if (state.isGroup) {
+                        IconButton(onClick = { onOpenInfo(state.conversationId) }) {
+                            Icon(Icons.Outlined.Info, contentDescription = "О группе")
+                        }
+                    }
+                },
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -131,8 +179,11 @@ fun ConversationScreen(
                 MessageList(
                     messages = state.messages,
                     currentUserId = state.currentUserId,
+                    senderNames = if (state.isGroup) state.memberNames else emptyMap(),
                     listState = listState,
                     onRetry = viewModel::retry,
+                    onOpenAttachment = viewModel::openAttachment,
+                    loadImage = viewModel::imageFile,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -142,8 +193,39 @@ fun ConversationScreen(
                 canSend = state.canSend,
                 onTextChange = viewModel::onComposerChange,
                 onSend = viewModel::send,
+                onAttach = { pickFile.launch(ATTACHABLE_TYPES) },
             )
         }
+    }
+}
+
+/** Типы для системного выбора файла — те же, что принимает сервер. */
+private val ATTACHABLE_TYPES = arrayOf(
+    "image/jpeg", "image/png", "image/gif", "image/webp", "image/heic",
+    "video/mp4", "video/webm",
+    "audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/webm",
+    "application/pdf", "application/zip", "text/plain",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+)
+
+/**
+ * Открытие файла внешним приложением.
+ *
+ * Через FileProvider: прямой путь file:// запрещён начиная с Android 7,
+ * а временное разрешение на чтение выдаётся только открывающему приложению.
+ */
+private fun openFile(context: android.content.Context, file: File, mimeType: String): Boolean {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+    val intent = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(uri, mimeType)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    return try {
+        context.startActivity(intent)
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
     }
 }
 
@@ -151,8 +233,11 @@ fun ConversationScreen(
 private fun MessageList(
     messages: List<Message>,
     currentUserId: UserId?,
+    senderNames: Map<UserId, String>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     onRetry: (Message) -> Unit,
+    onOpenAttachment: (Attachment) -> Unit,
+    loadImage: suspend (Attachment) -> File?,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -174,15 +259,37 @@ private fun MessageList(
             // не пересоздаёт элемент и не теряет его состояние.
             key = { it.clientMsgId.value },
         ) { message ->
+            if (message.type == MessageType.SYSTEM) {
+                SystemLine(SystemEventFormatter.text(message.system))
+                return@items
+            }
+
             val isOutgoing = currentUserId != null && message.senderId == currentUserId
 
-            Column {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = if (isOutgoing) Alignment.End else Alignment.Start,
+            ) {
+                if (!message.isDeleted) {
+                    message.attachments.forEach { attachment ->
+                        if (attachment.isImage) {
+                            ImageAttachment(attachment, loadImage, onClick = { onOpenAttachment(attachment) })
+                        } else {
+                            FileAttachment(attachment, onClick = { onOpenAttachment(attachment) })
+                        }
+                        Spacer(Modifier.size(2.dp))
+                    }
+                }
+
+                // Пузырь — для текста или подписи. Сообщение-картинка без
+                // подписи обходится без пустого пузыря, но время и статус
+                // доставки всё равно нужны — они показываются пузырём.
                 MessageBubble(
                     text = message.text,
                     isOutgoing = isOutgoing,
                     timeLabel = TimeFormatters.messageTime(message.createdAt),
                     deliveryStatus = message.deliveryStatus,
-                    senderName = null,
+                    senderName = if (isOutgoing) null else senderNames[message.senderId],
                     replyTo = message.replyTo,
                     reactions = message.reactions.map {
                         ReactionChipData(it.emoji, it.count, it.reactedByMe)
@@ -193,18 +300,131 @@ private fun MessageList(
                 )
 
                 if (message.canRetry) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        com.mango.core.designsystem.component.MangoTextButton(
-                            text = "Отправить снова",
-                            onClick = { onRetry(message) },
-                        )
-                    }
+                    com.mango.core.designsystem.component.MangoTextButton(
+                        text = "Отправить снова",
+                        onClick = { onRetry(message) },
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SystemLine(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 6.dp),
+    )
+}
+
+/**
+ * Превью картинки.
+ *
+ * Своя картинка показывается сразу из локального файла; чужая
+ * скачивается по временной ссылке один раз и дальше берётся с диска.
+ */
+@Composable
+private fun ImageAttachment(
+    attachment: Attachment,
+    loadImage: suspend (Attachment) -> File?,
+    onClick: () -> Unit,
+) {
+    var file by remember(attachment.id) { mutableStateOf(attachment.localUri?.let(::File)?.takeIf { it.isFile }) }
+    var failed by remember(attachment.id) { mutableStateOf(false) }
+    LaunchedEffect(attachment.id) {
+        if (file == null) {
+            file = loadImage(attachment)
+            failed = file == null
+        }
+    }
+
+    val ratio = if ((attachment.width ?: 0) > 0 && (attachment.height ?: 0) > 0) {
+        (attachment.width!!.toFloat() / attachment.height!!).coerceIn(0.5f, 2f)
+    } else {
+        4f / 3f
+    }
+
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier
+            .widthIn(max = 260.dp)
+            .fillMaxWidth(0.75f)
+            .aspectRatio(ratio)
+            .clip(MaterialTheme.shapes.large)
+            .clickable(enabled = file != null, onClick = onClick),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            when {
+                file != null -> AsyncImage(
+                    model = file,
+                    contentDescription = attachment.fileName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                failed -> Icon(Icons.Outlined.Image, contentDescription = "Картинка недоступна")
+                else -> CircularProgressIndicator(Modifier.size(32.dp))
+            }
+            UploadState(attachment, Modifier.align(Alignment.BottomCenter))
+        }
+    }
+}
+
+@Composable
+private fun FileAttachment(attachment: Attachment, onClick: () -> Unit) {
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier
+            .widthIn(max = 280.dp)
+            .clickable(onClick = onClick),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.AutoMirrored.Outlined.InsertDriveFile, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = attachment.fileName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = FileSizeFormatter.format(attachment.sizeBytes),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            UploadState(attachment)
+        }
+    }
+}
+
+/** Прогресс загрузки и отказ — общие для картинок и файлов. */
+@Composable
+private fun UploadState(attachment: Attachment, modifier: Modifier = Modifier) {
+    when {
+        attachment.syncStatus == SyncStatus.FAILED -> Text(
+            text = "Файл не загружен",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = modifier.padding(4.dp),
+        )
+        attachment.isUploading -> LinearProgressIndicator(
+            progress = { attachment.uploadProgress ?: 0f },
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .heightIn(min = 4.dp),
+        )
     }
 }
 
@@ -214,6 +434,7 @@ private fun Composer(
     canSend: Boolean,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
+    onAttach: () -> Unit,
 ) {
     Surface(tonalElevation = 3.dp) {
         Column {
@@ -225,6 +446,9 @@ private fun Composer(
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
+                IconButton(onClick = onAttach, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Outlined.AttachFile, contentDescription = "Прикрепить файл")
+                }
                 OutlinedTextField(
                     value = text,
                     onValueChange = onTextChange,

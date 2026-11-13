@@ -2,6 +2,7 @@ package com.mango.core.database.dao
 
 import androidx.room.Dao
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import com.mango.core.database.entity.NotificationEntity
 import com.mango.core.database.entity.UserEntity
@@ -12,10 +13,28 @@ import kotlinx.coroutines.flow.Flow
 interface UserDao {
 
     @Upsert
-    suspend fun upsert(user: UserEntity)
+    suspend fun upsertRaw(user: UserEntity)
 
-    @Upsert
-    suspend fun upsertAll(users: List<UserEntity>)
+    /**
+     * Запись пользователя с сохранением отметки «это я».
+     *
+     * Сведения о людях приходят отовсюду: участники чата, исполнители
+     * задач, авторы сообщений, результаты поиска — и все они записываются
+     * с `isMe = false`. Если среди них оказывается сам пользователь,
+     * прямая запись сбрасывала бы отметку, и приложение переставало бы
+     * понимать, кто вошёл: отправка отказывала бы с «не авторизован».
+     * Снять отметку может только выход из учётной записи (очистка базы).
+     */
+    @Transaction
+    suspend fun upsert(user: UserEntity) {
+        val wasMe = findById(user.id)?.isMe == true
+        upsertRaw(if (wasMe && !user.isMe) user.copy(isMe = true) else user)
+    }
+
+    @Transaction
+    suspend fun upsertAll(users: List<UserEntity>) {
+        users.forEach { upsert(it) }
+    }
 
     @Query("SELECT * FROM users WHERE id = :id")
     suspend fun findById(id: String): UserEntity?

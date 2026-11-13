@@ -147,4 +147,20 @@ object NetworkModule {
     @Singleton
     fun provideSyncApi(@AuthenticatedClient retrofit: Retrofit): SyncApi =
         retrofit.create(SyncApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideAttachmentsApi(@AuthenticatedClient retrofit: Retrofit): com.mango.core.network.api.AttachmentsApi =
+        retrofit.create(com.mango.core.network.api.AttachmentsApi::class.java)
+
+    /** Передача файлов — без токена: ссылка подписана сама (см. BlobTransferApi). */
+    @Provides
+    @Singleton
+    fun provideBlobTransferApi(@PlainClient retrofit: Retrofit): com.mango.core.network.api.BlobTransferApi =
+        retrofit.create(com.mango.core.network.api.BlobTransferApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideTasksApi(@AuthenticatedClient retrofit: Retrofit): com.mango.core.network.api.TasksApi =
+        retrofit.create(com.mango.core.network.api.TasksApi::class.java)
 }

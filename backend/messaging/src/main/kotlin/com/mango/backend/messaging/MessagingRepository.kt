@@ -1,6 +1,8 @@
 package com.mango.backend.messaging
 
+import com.mango.backend.common.ApiJson
 import com.mango.backend.common.instant
+import com.mango.backend.common.intOrNull
 import com.mango.backend.common.instantOrNull
 import com.mango.backend.common.longOrNull
 import com.mango.backend.common.query
@@ -146,7 +148,14 @@ class MessagingRepository {
         INSERT INTO conversation_members (conversation_id, user_id, role, joined_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT (conversation_id, user_id)
-        DO UPDATE SET left_at = NULL, role = EXCLUDED.role
+        DO UPDATE SET
+            -- Повторное добавление действующего участника ничего не меняет:
+            -- иначе оно молча понизило бы администратора до участника.
+            role      = CASE WHEN conversation_members.left_at IS NULL
+                             THEN conversation_members.role ELSE EXCLUDED.role END,
+            joined_at = CASE WHEN conversation_members.left_at IS NULL
+                             THEN conversation_members.joined_at ELSE EXCLUDED.joined_at END,
+            left_at   = NULL
         """.trimIndent(),
         conversationId, userId, role, now,
     )
@@ -176,6 +185,155 @@ class MessagingRepository {
         lastMessageId, now, conversationId,
     )
 
+    // ─────────────────────── управление группой ───────────────────────
+
+    /**
+     * Блокировка чата для изменения состава.
+     *
+     * Та же строка, что сериализует выдачу номеров сообщений. Два
+     * одновременных добавления участников иначе оба увидели бы, что
+     * место в группе есть, и вместе превысили бы предел.
+     */
+    fun lockConversationForChange(connection: Connection, conversationId: UUID): String? =
+        connection.queryOne(
+            "SELECT type FROM conversations WHERE id = ? AND deleted_at IS NULL FOR UPDATE",
+            conversationId,
+        ) { it.getString("type") }
+
+    fun activeMemberCount(connection: Connection, conversationId: UUID): Int =
+        connection.queryOne(
+            "SELECT count(*) AS n FROM conversation_members WHERE conversation_id = ? AND left_at IS NULL",
+            conversationId,
+        ) { it.getInt("n") } ?: 0
+
+    fun markLeft(connection: Connection, conversationId: UUID, userId: UUID, now: Instant): Int =
+        connection.update(
+            """
+            UPDATE conversation_members SET left_at = ?
+            WHERE conversation_id = ? AND user_id = ? AND left_at IS NULL
+            """.trimIndent(),
+            now, conversationId, userId,
+        )
+
+    fun setRole(connection: Connection, conversationId: UUID, userId: UUID, role: String): Int =
+        connection.update(
+            """
+            UPDATE conversation_members SET role = ?
+            WHERE conversation_id = ? AND user_id = ? AND left_at IS NULL
+            """.trimIndent(),
+            role, conversationId, userId,
+        )
+
+    /**
+     * Кому перейдёт владение, если владелец уходит.
+     *
+     * Сначала самый давний администратор, затем самый давний участник:
+     * группа без владельца не может ни добавить людей, ни назначить
+     * администраторов, и осталась бы такой навсегда.
+     */
+    fun successorFor(connection: Connection, conversationId: UUID, leaving: UUID): UUID? =
+        connection.queryOne(
+            """
+            SELECT user_id FROM conversation_members
+            WHERE conversation_id = ? AND user_id <> ? AND left_at IS NULL
+            ORDER BY CASE role WHEN 'ADMIN' THEN 0 ELSE 1 END, joined_at, user_id
+            LIMIT 1
+            """.trimIndent(),
+            conversationId, leaving,
+        ) { it.uuid("user_id") }
+
+    fun updateTitle(connection: Connection, conversationId: UUID, title: String, now: Instant): Int =
+        connection.update(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+            title, now, conversationId,
+        )
+
+    fun softDeleteConversation(connection: Connection, conversationId: UUID, now: Instant): Int =
+        connection.update(
+            "UPDATE conversations SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+            now, now, conversationId,
+        )
+
+    fun member(connection: Connection, conversationId: UUID, userId: UUID): MemberDto? =
+        members(connection, conversationId).firstOrNull { it.userId == userId }
+
+    fun displayNames(connection: Connection, ids: Collection<UUID>): Map<UUID, String> {
+        if (ids.isEmpty()) return emptyMap()
+        val placeholders = ids.joinToString(",") { "?" }
+        return connection.query(
+            "SELECT id, display_name FROM users WHERE id IN ($placeholders)",
+            *ids.toTypedArray(),
+        ) { it.uuid("id") to it.getString("display_name") }.toMap()
+    }
+
+    // ───────────────────────── вложения ─────────────────────────
+
+    /**
+     * Привязка загруженных вложений к сообщению.
+     *
+     * Одним UPDATE с условиями, которые и составляют проверку прав:
+     * вложение загрузил отправитель, для этого же чата, файл прошёл
+     * проверку и ещё ни к чему не привязан. Возвращает привязанные
+     * идентификаторы — вызывающий сравнивает их с запрошенными.
+     */
+    fun claimAttachments(
+        connection: Connection,
+        attachmentIds: List<UUID>,
+        ownerId: UUID,
+        conversationId: UUID,
+        messageId: UUID,
+    ): Set<UUID> {
+        if (attachmentIds.isEmpty()) return emptySet()
+        val placeholders = attachmentIds.joinToString(",") { "?" }
+        return connection.query(
+            """
+            UPDATE attachments SET message_id = ?
+            WHERE id IN ($placeholders)
+              AND owner_id = ? AND conversation_id = ?
+              AND scan_status = 'CLEAN' AND message_id IS NULL AND deleted_at IS NULL
+            RETURNING id
+            """.trimIndent(),
+            messageId, *attachmentIds.toTypedArray(), ownerId, conversationId,
+        ) { it.uuid("id") }.toSet()
+    }
+
+    /** Вложения пачки сообщений одним запросом, в порядке загрузки. */
+    fun attachmentsOf(connection: Connection, messageIds: Collection<UUID>): Map<UUID, List<AttachmentDto>> {
+        if (messageIds.isEmpty()) return emptyMap()
+        val placeholders = messageIds.joinToString(",") { "?" }
+        return connection.query(
+            """
+            SELECT id, message_id, mime_type, size_bytes, file_name, width, height, duration_ms
+            FROM attachments
+            WHERE message_id IN ($placeholders) AND deleted_at IS NULL
+            ORDER BY created_at, id
+            """.trimIndent(),
+            *messageIds.toTypedArray(),
+        ) { rs ->
+            rs.uuid("message_id") to AttachmentDto(
+                id = rs.uuid("id"),
+                mimeType = rs.getString("mime_type"),
+                sizeBytes = rs.getLong("size_bytes"),
+                fileName = rs.getString("file_name"),
+                width = rs.intOrNull("width"),
+                height = rs.intOrNull("height"),
+                durationMs = rs.intOrNull("duration_ms"),
+            )
+        }.groupBy({ it.first }, { it.second })
+    }
+
+    /** Дополняет сообщения их вложениями. Удалённым вложения не отдаются. */
+    fun withAttachments(connection: Connection, messages: List<MessageDto>): List<MessageDto> {
+        val ids = messages
+            .filter { it.deletedAt == null && it.type != "TEXT" && it.type != "SYSTEM" }
+            .map { it.id }
+        if (ids.isEmpty()) return messages
+        val byMessage = attachmentsOf(connection, ids)
+        return messages.map { message ->
+            byMessage[message.id]?.let { message.copy(attachments = it) } ?: message
+        }
+    }
+
     // ───────────────────────── сообщения ─────────────────────────
 
     /**
@@ -204,7 +362,7 @@ class MessagingRepository {
     ): MessageDto? = connection.queryOne(
         "$MESSAGE_SELECT WHERE m.conversation_id = ? AND m.sender_id = ? AND m.client_msg_id = ?",
         conversationId, senderId, clientMsgId,
-    ) { mapMessage(it) }
+    ) { mapMessage(it) }?.let { withAttachments(connection, listOf(it)).single() }
 
     /**
      * Выдаёт следующий порядковый номер.
@@ -245,6 +403,7 @@ class MessagingRepository {
 
     fun messageById(connection: Connection, id: UUID): MessageDto? =
         connection.queryOne("$MESSAGE_SELECT WHERE m.id = ?", id) { mapMessage(it) }
+            ?.let { withAttachments(connection, listOf(it)).single() }
 
     /**
      * Страница истории.
@@ -254,6 +413,15 @@ class MessagingRepository {
      * тем дороже становится запрос.
      */
     fun history(
+        connection: Connection,
+        conversationId: UUID,
+        beforeSeq: Long?,
+        afterSeq: Long?,
+        limit: Int,
+    ): List<MessageDto> =
+        withAttachments(connection, historyPage(connection, conversationId, beforeSeq, afterSeq, limit))
+
+    private fun historyPage(
         connection: Connection,
         conversationId: UUID,
         beforeSeq: Long?,
@@ -359,7 +527,8 @@ class MessagingRepository {
             clientMsgId = rs.getString("client_msg_id"),
             seq = rs.getLong("seq"),
             type = rs.getString("type"),
-            body = rs.getString("body"),
+            body = rs.getString("body").takeUnless { rs.getString("type") == "SYSTEM" },
+            system = systemEventOf(rs.getString("type"), rs.getString("body")),
             replyTo = replyToId?.let {
                 val snapshot = rs.getString("reply_body")
                 val replyDeleted = rs.instantOrNull("reply_deleted_at") != null
@@ -379,6 +548,16 @@ class MessagingRepository {
         )
     }
 
+    /**
+     * Системное сообщение хранит в `body` структуру события.
+     * Нераспознанное содержимое не роняет выдачу истории: сообщение
+     * отдаётся без структуры, и клиент покажет его как служебное.
+     */
+    private fun systemEventOf(type: String, body: String?): SystemEventDto? {
+        if (type != "SYSTEM" || body == null) return null
+        return runCatching { ApiJson.decodeFromString(SystemEventDto.serializer(), body) }.getOrNull()
+    }
+
     private fun mapConversation(rs: ResultSet): ConversationDto {
         val type = rs.getString("type")
         val storedTitle = rs.getString("title")
@@ -394,7 +573,8 @@ class MessagingRepository {
                 clientMsgId = rs.getString("msg_client_msg_id"),
                 seq = rs.getLong("msg_seq"),
                 type = rs.getString("msg_type"),
-                body = rs.getString("msg_body"),
+                body = rs.getString("msg_body").takeUnless { rs.getString("msg_type") == "SYSTEM" },
+                system = systemEventOf(rs.getString("msg_type"), rs.getString("msg_body")),
                 replyTo = null,
                 editedAt = rs.instantOrNull("msg_edited_at"),
                 deletedAt = rs.instantOrNull("msg_deleted_at"),
@@ -488,6 +668,7 @@ class MessagingRepository {
                   WHERE um.conversation_id = c.id
                     AND um.seq > cm.last_read_seq
                     AND um.deleted_at IS NULL
+                    AND um.type <> 'SYSTEM'
                     AND um.sender_id <> cm.user_id) AS unread_count
             FROM conversation_members cm
             JOIN conversations c ON c.id = cm.conversation_id AND c.deleted_at IS NULL

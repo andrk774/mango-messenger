@@ -37,7 +37,11 @@ data class ConversationUiState(
     val composerText: String = "",
     val isLoadingHistory: Boolean = false,
     val pendingOperations: Int = 0,
+    /** Имена участников — подписи к чужим сообщениям в группе. */
+    val memberNames: Map<UserId, String> = emptyMap(),
 ) {
+    val isGroup: Boolean get() = conversation?.type == com.mango.core.model.ConversationType.GROUP
+
     val isEmpty: Boolean get() = messages.isEmpty() && !isLoadingHistory
     val canSend: Boolean get() = composerText.isNotBlank()
 
@@ -47,6 +51,9 @@ data class ConversationUiState(
 
 sealed interface ConversationEvent {
     data class Message(val text: String) : ConversationEvent
+
+    /** Файл скачан — экран открывает его подходящим приложением. */
+    data class OpenFile(val file: java.io.File, val mimeType: String) : ConversationEvent
 }
 
 @HiltViewModel
@@ -77,10 +84,14 @@ class ConversationViewModel @Inject constructor(
         conversationRepository.observeConversation(conversationId),
         userRepository.observeCurrentUser(),
         composerText,
-        combine(isLoadingHistory, syncStatusRepository.observeSnapshot()) { loading, sync ->
-            loading to sync.pendingOperations
+        combine(
+            isLoadingHistory,
+            syncStatusRepository.observeSnapshot(),
+            conversationRepository.observeMembersWithRoles(conversationId),
+        ) { loading, sync, members ->
+            Triple(loading, sync.pendingOperations, members.associate { it.user.id to it.user.displayName })
         },
-    ) { messages, conversation, currentUser, text, (loading, pending) ->
+    ) { messages, conversation, currentUser, text, (loading, pending, names) ->
         ConversationUiState(
             conversationId = conversationId.value,
             title = conversation?.title ?: "Переписка",
@@ -90,6 +101,7 @@ class ConversationViewModel @Inject constructor(
             composerText = text,
             isLoadingHistory = loading,
             pendingOperations = pending,
+            memberNames = names,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -128,6 +140,42 @@ class ConversationViewModel @Inject constructor(
                     composerText.value = text
                     _events.emit(ConversationEvent.Message(result.error.toUserMessage()))
                 }
+            }
+        }
+    }
+
+    /**
+     * Отправка файла.
+     *
+     * Подпись берётся из поля ввода: так привычнее, чем отдельный диалог,
+     * и набранный текст не теряется.
+     */
+    fun sendAttachment(uri: android.net.Uri) {
+        val caption = composerText.value.trim().takeIf { it.isNotEmpty() }
+        composerText.value = ""
+        viewModelScope.launch {
+            when (val result = messageRepository.sendAttachment(conversationId, uri, caption)) {
+                is Outcome.Success -> Unit
+                is Outcome.Failure -> {
+                    caption?.let { composerText.value = it }
+                    _events.emit(ConversationEvent.Message(result.error.toUserMessage()))
+                }
+            }
+        }
+    }
+
+    /** Файл картинки для превью: свой — сразу, чужой — после скачивания. */
+    suspend fun imageFile(attachment: com.mango.core.model.Attachment): java.io.File? =
+        when (val result = messageRepository.attachmentFile(attachment.id)) {
+            is Outcome.Success -> result.value
+            is Outcome.Failure -> null
+        }
+
+    fun openAttachment(attachment: com.mango.core.model.Attachment) {
+        viewModelScope.launch {
+            when (val result = messageRepository.attachmentFile(attachment.id)) {
+                is Outcome.Success -> _events.emit(ConversationEvent.OpenFile(result.value, attachment.mimeType))
+                is Outcome.Failure -> _events.emit(ConversationEvent.Message(result.error.toUserMessage()))
             }
         }
     }

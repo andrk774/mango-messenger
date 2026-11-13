@@ -25,6 +25,12 @@ data class ConversationWithPreview(
     val unreadCount: Int,
 )
 
+data class MemberWithUser(
+    @androidx.room.Embedded val user: com.mango.core.database.entity.UserEntity,
+    @androidx.room.ColumnInfo(name = "member_role") val role: MemberRole,
+    @androidx.room.ColumnInfo(name = "member_joined_at") val joinedAt: Long,
+)
+
 data class LastMessageSender(
     val id: String?,
     @androidx.room.ColumnInfo(name = "display_name") val displayName: String?,
@@ -62,6 +68,7 @@ interface ConversationDao {
                 WHERE um.conversation_id = c.id
                   AND um.seq > c.last_read_seq
                   AND um.deleted_at IS NULL
+                  AND um.type != 'SYSTEM'
                   AND um.sender_id != :currentUserId
             ) AS unreadCount
         FROM conversations c
@@ -120,6 +127,7 @@ interface ConversationDao {
                 WHERE m.conversation_id = c.id
                   AND m.seq > c.last_read_seq
                   AND m.deleted_at IS NULL
+                  AND m.type != 'SYSTEM'
                   AND m.sender_id != :currentUserId
             ) AS cnt
             FROM conversations c
@@ -146,6 +154,25 @@ interface ConversationDao {
 
     @Query("SELECT * FROM conversation_members WHERE conversation_id = :conversationId AND left_at IS NULL")
     suspend fun membersOf(conversationId: String): List<ConversationMemberEntity>
+
+    /** Участники с ролями — для экрана группы. Владелец и администраторы первыми. */
+    @Query(
+        """
+        SELECT u.*, cm.role AS member_role, cm.joined_at AS member_joined_at
+        FROM users u
+        INNER JOIN conversation_members cm ON cm.user_id = u.id
+        WHERE cm.conversation_id = :conversationId AND cm.left_at IS NULL
+        ORDER BY CASE cm.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END, u.display_name
+        """,
+    )
+    fun observeMembers(conversationId: String): Flow<List<MemberWithUser>>
+
+    /** Состав с сервера заменяет локальный целиком: выбывшие удаляются. */
+    @Query("DELETE FROM conversation_members WHERE conversation_id = :conversationId AND user_id NOT IN (:keep)")
+    suspend fun deleteMembersExcept(conversationId: String, keep: List<String>)
+
+    @Query("DELETE FROM conversation_members WHERE conversation_id = :conversationId AND user_id = :userId")
+    suspend fun deleteMember(conversationId: String, userId: String)
 
     @Query("SELECT role FROM conversation_members WHERE conversation_id = :conversationId AND user_id = :userId AND left_at IS NULL")
     suspend fun roleOf(conversationId: String, userId: String): MemberRole?
@@ -186,6 +213,29 @@ interface ConversationDao {
         """,
     )
     suspend fun findDirectConversation(currentUserId: String, otherUserId: String): ConversationEntity?
+
+    /**
+     * Запись серверной карточки чата с сохранением локальных полей.
+     *
+     * Черновик, архив и счётчик закреплённых живут только на устройстве.
+     * Запись карточки целиком затирала бы их при каждом обновлении списка
+     * чатов и каждом событии об изменении группы.
+     */
+    @Transaction
+    suspend fun upsertFromServer(conversation: ConversationEntity) {
+        val existing = findById(conversation.id)
+        upsert(
+            if (existing == null) {
+                conversation
+            } else {
+                conversation.copy(
+                    draft = existing.draft,
+                    isArchived = existing.isArchived,
+                    pinnedMessageCount = existing.pinnedMessageCount,
+                )
+            },
+        )
+    }
 
     /** Запись чата вместе с участниками одной транзакцией. */
     @Transaction

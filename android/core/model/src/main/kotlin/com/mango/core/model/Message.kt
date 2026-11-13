@@ -28,6 +28,8 @@ data class Message(
     val editedAt: Instant? = null,
     val deletedAt: Instant? = null,
     val createdAt: Instant,
+    /** Только у `type = SYSTEM`: что произошло с группой. */
+    val system: SystemEvent? = null,
 ) {
     val isDeleted: Boolean get() = deletedAt != null
     val isEdited: Boolean get() = editedAt != null
@@ -88,3 +90,32 @@ data class MessageGap(
     val fromSeq: Long,
     val toSeq: Long,
 )
+
+/**
+ * Изменение группы, показанное в переписке.
+ *
+ * Сервер присылает структуру, а не фразу: текст собирается на устройстве
+ * на языке интерфейса.
+ */
+data class SystemEvent(
+    val kind: SystemEventKind,
+    val actorId: UserId,
+    val actorName: String,
+    val targets: List<SystemTarget> = emptyList(),
+    val title: String? = null,
+    val role: MemberRole? = null,
+)
+
+data class SystemTarget(val userId: UserId, val name: String)
+
+enum class SystemEventKind {
+    MEMBERS_ADDED,
+    MEMBER_REMOVED,
+    MEMBER_LEFT,
+    TITLE_CHANGED,
+    ROLE_CHANGED,
+    OWNER_CHANGED,
+
+    /** Событие из более новой версии сервера: показывается как служебное. */
+    UNKNOWN,
+}

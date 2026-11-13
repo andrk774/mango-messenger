@@ -18,6 +18,7 @@ data class AppConfig(
     val password: PasswordConfig,
     val redis: RedisConfig,
     val mail: MailConfig,
+    val storage: StorageConfig,
 ) {
     enum class Environment { LOCAL, TEST, STAGING, PRODUCTION;
 
@@ -93,6 +94,15 @@ data class AppConfig(
                     from = env("MANGO_MAIL_FROM") ?: "noreply@mango.local",
                     enabled = env("MANGO_MAIL_ENABLED")?.toBooleanStrictOrNull() ?: true,
                 ),
+                storage = StorageConfig(
+                    directory = env("MANGO_STORAGE_DIR") ?: "build/attachments",
+                    // Отдельный ключ подписи ссылок можно задать явно; иначе
+                    // он выводится из секрета JWT с другим назначением, чтобы
+                    // подпись ссылки нельзя было выдать за подпись токена.
+                    signingKey = env("MANGO_STORAGE_SIGNING_KEY") ?: "storage-url-signing:$jwtSecret",
+                    maxFileBytes = env("MANGO_STORAGE_MAX_FILE_MB")?.toLongOrNull()
+                        ?.let { it * 1024 * 1024 } ?: (100L * 1024 * 1024),
+                ),
             )
         }
     }
@@ -124,6 +134,18 @@ data class PasswordConfig(
 )
 
 data class RedisConfig(val url: String, val enabled: Boolean)
+
+/**
+ * Хранилище вложений.
+ *
+ * [directory] — каталог файловой реализации (см. ADR-0019); в контейнере
+ * это подключённый том.
+ */
+data class StorageConfig(
+    val directory: String,
+    val signingKey: String,
+    val maxFileBytes: Long,
+)
 
 data class MailConfig(
     val host: String,

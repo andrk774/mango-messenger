@@ -52,7 +52,20 @@ class MessageService(
             check(type in ALLOWED_TYPES, "type", "Недопустимый тип сообщения")
             if (type == "TEXT") {
                 check(!body.isNullOrEmpty(), "body", "Текстовое сообщение не может быть пустым")
+                check(request.attachmentIds.isEmpty(), "type", "Сообщение с вложениями не может иметь тип TEXT")
+            } else {
+                check(request.attachmentIds.isNotEmpty(), "attachmentIds", "Нужно хотя бы одно вложение")
             }
+            check(
+                request.attachmentIds.size <= MAX_ATTACHMENTS,
+                "attachmentIds",
+                "Не больше $MAX_ATTACHMENTS вложений в сообщении",
+            )
+            check(
+                request.attachmentIds.distinct().size == request.attachmentIds.size,
+                "attachmentIds",
+                "Вложения повторяются",
+            )
             requireLength(body, "body", max = MAX_BODY_LENGTH)
         }
 
@@ -99,6 +112,22 @@ class MessageService(
                 replyToId = request.replyToId,
                 now = now,
             )
+
+            // Привязка вложений в той же транзакции: сообщение без своих
+            // файлов или файлы, привязанные к несуществующему сообщению,
+            // невозможны. Не привязалось хоть одно — откат всего.
+            val claimed = repository.claimAttachments(
+                connection, request.attachmentIds, userId, conversationId, messageId,
+            )
+            if (claimed.size != request.attachmentIds.size) {
+                throw AppException.Validation(
+                    mapOf(
+                        "attachmentIds" to
+                            "Вложение не найдено, ещё не загружено или уже использовано",
+                    ),
+                )
+            }
+
             repository.touchConversation(connection, conversationId, messageId, now)
 
             val message = repository.messageById(connection, messageId)
@@ -240,6 +269,7 @@ class MessageService(
         const val MAX_BODY_LENGTH = 8192
         const val DEFAULT_PAGE_SIZE = 50
         const val MAX_PAGE_SIZE = 100
+        const val MAX_ATTACHMENTS = 10
 
         private val ALLOWED_TYPES = setOf("TEXT", "IMAGE", "VIDEO", "VOICE", "FILE")
     }

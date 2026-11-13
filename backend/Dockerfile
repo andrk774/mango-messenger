@@ -22,6 +22,8 @@ COPY auth/build.gradle.kts auth/
 COPY sync/build.gradle.kts sync/
 COPY messaging/build.gradle.kts messaging/
 COPY realtime/build.gradle.kts realtime/
+COPY tasks/build.gradle.kts tasks/
+COPY storage/build.gradle.kts storage/
 COPY app/build.gradle.kts app/
 
 RUN chmod +x gradlew && \
@@ -43,6 +45,11 @@ FROM eclipse-temurin:21-jre-alpine AS runtime
 # Процесс не от root: компрометация приложения не должна давать
 # прав на запись в системные каталоги контейнера.
 RUN addgroup -S mango && adduser -S mango -G mango
+
+# Каталог вложений создаётся заранее с нужным владельцем: новый том
+# Docker наследует владельца каталога из образа. Без этого том
+# принадлежал бы root, и загрузка файлов падала бы с отказом в доступе.
+RUN mkdir -p /data/attachments && chown mango:mango /data/attachments
 
 WORKDIR /opt/mango
 COPY --from=build --chown=mango:mango /src/app/build/install/app ./

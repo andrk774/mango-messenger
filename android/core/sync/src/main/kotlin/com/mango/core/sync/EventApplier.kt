@@ -4,7 +4,13 @@ import androidx.room.withTransaction
 import com.mango.core.common.Logger
 import com.mango.core.common.Redact
 import com.mango.core.data.mapper.senderEntity
+import com.mango.core.data.mapper.toAssigneeEntity
 import com.mango.core.data.mapper.toEntity
+import com.mango.core.data.mapper.toUserEntity
+import com.mango.core.data.mapper.withPendingField
+import com.mango.core.data.outbox.OpType
+import com.mango.core.data.outbox.OutboxJson
+import com.mango.core.data.outbox.PatchTaskPayload
 import com.mango.core.database.MangoDatabase
 import com.mango.core.database.entity.ConversationEntity
 import com.mango.core.database.entity.MessageEntity
@@ -20,7 +26,18 @@ import com.mango.core.network.dto.MessageDeletedPayloadDto
 import com.mango.core.network.dto.MessageDto
 import com.mango.core.network.dto.MessageEditedPayloadDto
 import com.mango.core.network.dto.ReadMarkerPayloadDto
+import com.mango.core.network.dto.MembersAddedPayloadDto
+import com.mango.core.network.dto.MemberRemovedPayloadDto
+import com.mango.core.network.dto.MemberUpdatedPayloadDto
+import com.mango.core.network.dto.MemberDto
+import com.mango.core.database.entity.ConversationMemberEntity
+import com.mango.core.data.mapper.storeServerAttachments
 import com.mango.core.network.dto.SyncEventDto
+import com.mango.core.network.dto.TaskChangedPayloadDto
+import com.mango.core.network.dto.TaskCommentAddedPayloadDto
+import com.mango.core.network.dto.TaskCommentDto
+import com.mango.core.network.dto.TaskDeletedPayloadDto
+import com.mango.core.network.dto.TaskDto
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -44,6 +61,7 @@ class EventApplier @Inject constructor(
     private val conversationDao = database.conversationDao()
     private val userDao = database.userDao()
     private val outboxDao = database.outboxDao()
+    private val taskDao = database.taskDao()
 
     /**
      * Применяет пачку событий и продвигает курсор одной транзакцией.
@@ -116,10 +134,43 @@ class EventApplier @Inject constructor(
                     ).conversation,
                 )
 
+                "CONVERSATION_MEMBER_ADDED" -> {
+                    val payload = json.decodeFromJsonElement(MembersAddedPayloadDto.serializer(), event.payload)
+                    storeMembers(payload.conversationId, payload.members)
+                }
+
+                "CONVERSATION_MEMBER_UPDATED" -> {
+                    val payload = json.decodeFromJsonElement(MemberUpdatedPayloadDto.serializer(), event.payload)
+                    storeMembers(payload.conversationId, listOf(payload.member))
+                }
+
+                "CONVERSATION_MEMBER_REMOVED" -> applyMemberRemoved(
+                    json.decodeFromJsonElement(MemberRemovedPayloadDto.serializer(), event.payload),
+                )
+
                 "READ_MARKER_MOVED" -> applyReadMarker(
                     json.decodeFromJsonElement(
                         ReadMarkerPayloadDto.serializer(), event.payload,
                     ),
+                )
+
+                "TASK_CREATED", "TASK_UPDATED" -> applyTask(
+                    json.decodeFromJsonElement(
+                        TaskChangedPayloadDto.serializer(), event.payload,
+                    ).task,
+                )
+
+                "TASK_DELETED" -> {
+                    val payload = json.decodeFromJsonElement(
+                        TaskDeletedPayloadDto.serializer(), event.payload,
+                    )
+                    taskDao.markDeleted(payload.taskId, payload.deletedAt.toEpochMilli(), SyncStatus.SYNCED)
+                }
+
+                "TASK_COMMENT_ADDED" -> applyComment(
+                    json.decodeFromJsonElement(
+                        TaskCommentAddedPayloadDto.serializer(), event.payload,
+                    ).comment,
                 )
 
                 else -> logger.d(TAG, "событие ${event.type} пока не применяется")
@@ -162,6 +213,7 @@ class EventApplier @Inject constructor(
             syncStatus = SyncStatus.SYNCED,
         )
         messageDao.upsert(dto.toEntity())
+        database.storeServerAttachments(dto, System.currentTimeMillis())
 
         conversationDao.advanceLastEventSeq(dto.conversationId, dto.seq)
     }
@@ -178,7 +230,41 @@ class EventApplier @Inject constructor(
     }
 
     private suspend fun applyConversation(dto: ConversationDto) {
-        conversationDao.upsert(dto.toEntity())
+        conversationDao.upsertFromServer(dto.toEntity())
+    }
+
+    private suspend fun storeMembers(conversationId: String, members: List<MemberDto>) {
+        // Событие могло прийти раньше самого чата (см. ensureConversationExists).
+        ensureConversationExists(conversationId)
+        members.forEach { userDao.upsert(it.toEntity()) }
+        conversationDao.upsertMembers(
+            members.map { member ->
+                ConversationMemberEntity(
+                    conversationId = conversationId,
+                    userId = member.userId,
+                    role = runCatching { MemberRole.valueOf(member.role) }.getOrDefault(MemberRole.MEMBER),
+                    joinedAt = member.joinedAt.toEpochMilli(),
+                    lastReadSeq = member.lastReadSeq,
+                    leftAt = null,
+                )
+            },
+        )
+    }
+
+    /**
+     * Участник выбыл.
+     *
+     * Если выбыл сам пользователь — чат удаляется с устройства целиком
+     * вместе с перепиской: доступа к ней у него больше нет, и показывать
+     * её, как будто ничего не случилось, было бы обманом. Задачи чата,
+     * которые он больше не видит, уйдут при следующей загрузке задач.
+     */
+    private suspend fun applyMemberRemoved(payload: MemberRemovedPayloadDto) {
+        if (payload.userId == userDao.currentUserId()) {
+            conversationDao.delete(payload.conversationId)
+        } else {
+            conversationDao.deleteMember(payload.conversationId, payload.userId)
+        }
     }
 
     private suspend fun applyReadMarker(payload: ReadMarkerPayloadDto) {
@@ -232,6 +318,92 @@ class EventApplier @Inject constructor(
     suspend fun rememberUser(id: String, displayName: String, avatarUrl: String?) {
         if (userDao.findById(id) != null) return
         userDao.upsert(senderEntity(id, displayName, avatarUrl))
+    }
+
+    // ─────────────────────────────── задачи ───────────────────────────────
+
+    /**
+     * Применение задачи, полученной прямым ответом сервера.
+     *
+     * Ответ на операцию и событие из журнала описывают одно и то же и
+     * применяются одинаково.
+     */
+    suspend fun applyServerTask(dto: TaskDto) {
+        database.withTransaction { applyTask(dto) }
+    }
+
+    suspend fun applyServerComment(dto: TaskCommentDto) {
+        database.withTransaction { applyComment(dto) }
+    }
+
+    /**
+     * Запись серверной версии задачи.
+     *
+     * ## Неотправленные правки накладываются сверху
+     *
+     * Пока правка пользователя лежит в очереди, сервер о ней не знает.
+     * Если просто записать серверную версию, интерфейс на время откатит
+     * изменение пользователя — статус «вернётся» назад, а потом, после
+     * отправки, снова станет новым. Поэтому значения из неотправленных
+     * операций накладываются поверх серверных, а задача остаётся помеченной
+     * как ожидающая отправки.
+     *
+     * Окончательное решение всё равно принимает сервер: когда правка
+     * доедет, его ответ (с учётом разрешения конфликтов) станет истиной.
+     */
+    private suspend fun applyTask(dto: TaskDto) {
+        var entity = dto.toEntity()
+
+        val pending = outboxDao.pendingForEntity("TASK", dto.id)
+        val pendingPatches = pending.filter { it.opType == OpType.PATCH_TASK }
+        pendingPatches.forEach { operation ->
+            runCatching { OutboxJson.decodeFromString<PatchTaskPayload>(operation.payloadJson) }
+                .getOrNull()
+                ?.changedFields
+                ?.forEach { (field, value) -> entity = entity.withPendingField(field, value) }
+        }
+        if (pending.isNotEmpty()) entity = entity.copy(syncStatus = SyncStatus.PENDING)
+
+        taskDao.upsert(entity)
+        syncAssignees(dto)
+    }
+
+    /**
+     * Сверка исполнителей с сервером.
+     *
+     * Подтверждённые строки, которых нет в серверном наборе, снимаются;
+     * неотправленные локальные назначения не трогаются — они ещё не дошли
+     * до сервера и не могли быть в его ответе.
+     */
+    private suspend fun syncAssignees(dto: TaskDto) {
+        val serverIds = dto.assignees.map { it.userId }.toSet()
+        val now = System.currentTimeMillis()
+
+        taskDao.allAssigneesOf(dto.id)
+            .filter { it.syncStatus == SyncStatus.SYNCED && it.userId !in serverIds }
+            .forEach { taskDao.deleteAssignee(dto.id, it.userId) }
+
+        val localPending = taskDao.allAssigneesOf(dto.id)
+            .filter { it.syncStatus != SyncStatus.SYNCED }
+            .map { it.userId }
+            .toSet()
+
+        dto.assignees.forEach { assignee ->
+            if (userDao.findById(assignee.userId) == null) {
+                userDao.upsert(assignee.toUserEntity())
+            }
+            if (assignee.userId !in localPending) {
+                taskDao.upsertAssignee(assignee.toAssigneeEntity(dto.id, now))
+            }
+        }
+    }
+
+    private suspend fun applyComment(dto: TaskCommentDto) {
+        rememberUser(dto.authorId, dto.authorName, null)
+        // Локальная копия того же комментария (созданная офлайн) имеет
+        // другой идентификатор, но тот же клиентский ключ.
+        taskDao.deleteLocalCommentCopy(dto.taskId, dto.clientOpId, dto.id)
+        taskDao.upsertComment(dto.toEntity())
     }
 
     companion object {

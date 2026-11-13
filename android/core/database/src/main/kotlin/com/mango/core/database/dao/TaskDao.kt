@@ -178,6 +178,20 @@ interface TaskDao {
     @Query("DELETE FROM task_assignees WHERE task_id = :taskId AND user_id = :userId")
     suspend fun deleteAssignee(taskId: String, userId: String)
 
+    /** Все строки исполнителей задачи, включая снятых и неотправленных. */
+    @Query("SELECT * FROM task_assignees WHERE task_id = :taskId")
+    suspend fun allAssigneesOf(taskId: String): List<TaskAssigneeEntity>
+
+    /**
+     * Удаление локальной копии комментария перед записью серверной.
+     *
+     * Локальная и серверная копии имеют разные идентификаторы, но один
+     * клиентский ключ, а ключ уникален в пределах задачи. Без удаления
+     * запись серверной копии упала бы на ограничении уникальности.
+     */
+    @Query("DELETE FROM task_comments WHERE task_id = :taskId AND client_op_id = :clientOpId AND id != :keepId")
+    suspend fun deleteLocalCommentCopy(taskId: String, clientOpId: String, keepId: String)
+
     // --- комментарии ---
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

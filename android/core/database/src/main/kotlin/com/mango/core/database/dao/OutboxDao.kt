@@ -85,6 +85,23 @@ interface OutboxDao {
     @Query("SELECT * FROM outbox_operations WHERE client_op_id = :clientOpId")
     suspend fun findByClientOpId(clientOpId: String): OutboxOperationEntity?
 
+    /**
+     * Неотправленные операции над сущностью, в порядке создания.
+     *
+     * По ним серверная версия задачи дополняется локальными правками,
+     * которые ещё не доехали: иначе ответ сервера визуально откатывал бы
+     * изменение пользователя до момента его отправки.
+     */
+    @Query(
+        """
+        SELECT * FROM outbox_operations
+        WHERE entity_type = :entityType AND entity_id = :entityId
+          AND status IN ('PENDING', 'IN_FLIGHT', 'BLOCKED')
+        ORDER BY created_at ASC
+        """,
+    )
+    suspend fun pendingForEntity(entityType: String, entityId: String): List<OutboxOperationEntity>
+
     @Query("SELECT COUNT(*) FROM outbox_operations WHERE status IN ('PENDING', 'IN_FLIGHT', 'BLOCKED')")
     fun observePendingCount(): Flow<Int>
 
@@ -143,6 +160,10 @@ interface OutboxDao {
         """,
     )
     suspend fun recoverInFlight(nowMillis: Long): Int
+
+    /** Операции, ждущие данную: при её окончательном отказе они не выполнятся никогда. */
+    @Query("SELECT * FROM outbox_operations WHERE depends_on_op_id = :clientOpId AND status = 'BLOCKED'")
+    suspend fun blockedDependentsOf(clientOpId: String): List<OutboxOperationEntity>
 
     /** Разблокировка операций, чья зависимость выполнена. */
     @Query(

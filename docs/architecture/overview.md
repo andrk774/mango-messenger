@@ -70,11 +70,11 @@ Mango Messenger — мессенджер для Android с интегриров�
 | `:core:security` | Android | Keystore-шифрование, хранилище токенов | ✅ (кроме инструментальной проверки) |
 | `:core:data` | Android | реализации репозиториев, мапперы, payload очереди | ✅ локальная часть |
 | `:core:testing` | Android | правила и фейки для тестов | ✅ |
-| `:core:network` | Android | Retrofit, DTO, auth-интерцептор, refresh | ⏳ Этап 4 |
-| `:core:sync` | Android | `OutboxProcessor`, WorkManager, разрешение конфликтов | ⏳ Этап 4 |
-| `:core:realtime` | Android | WebSocket, heartbeat, reconnect, догонка | ⏳ Этап 4 |
+| `:core:network` | Android | Retrofit, DTO, auth-интерцептор, refresh; API чатов и задач | ✅ Этапы 4–5 |
+| `:core:sync` | Android | `OutboxProcessor`, WorkManager, `EventApplier`, наложение неотправленных правок задач | ✅ Этапы 4–5 |
+| `:core:realtime` | Android | WebSocket, heartbeat, reconnect, догонка | ✅ Этап 4 |
 | `:app` | Android | Application, навигация, экраны | ✅ каркас |
-| `:feature:*` | Android | auth, chats, messages, tasks, contacts, notifications, profile, settings | ⏳ Этапы 4–6 |
+| `:feature:*` | Android | auth, chats, messages, tasks, contacts, notifications, profile, settings | ⏳ экраны пока в `:app` |
 
 Модули `:core:network`, `:core:sync`, `:core:realtime` и `:feature:*`
 **намеренно не созданы пустыми**. Они появятся вместе с содержимым: каталог
@@ -123,7 +123,7 @@ backend/
 обращение к таблицам чужого модуля запрещено — это и есть будущая граница
 отдельного сервиса.
 
-### Что уже есть (Этап 3)
+### Что уже есть (Этапы 3–6a)
 
 | Модуль | Содержимое | Статус |
 |---|---|---|
@@ -131,11 +131,13 @@ backend/
 | `auth` | Argon2id, JWT, ротация refresh, сессии, устройства, токены из писем, SMTP | ✅ |
 | `app` | композиционный корень, миграции Flyway, плагины Ktor, маршруты, проверки состояния | ✅ |
 | `sync` | журнал событий, курсоры догонки, `410 Gone` при устаревшем курсоре | ✅ |
-| `messaging` | чаты, участники, сообщения, порядок и идемпотентность, защита от IDOR | ✅ |
+| `messaging` | чаты, участники, роли и состав групп (ADR-0020), сообщения, системные сообщения, порядок и идемпотентность, защита от IDOR | ✅ |
 | `realtime` | WebSocket-хаб, аутентификация первым кадром, рассылка через Redis | ✅ |
-| `tasks`, `notifications`, `storage` | — | ⏳ Этапы 5–6 |
+| `tasks` | задачи, поля с разрешением конфликтов, исполнители, комментарии, история, задача из сообщения | ✅ Этап 5 |
+| `storage` | вложения: разрешения, приём с проверкой типа, подписанные ссылки (ADR-0019) | ✅ Этап 6a |
+| `notifications` | — | ⏳ Этап 6b |
 
-Модули Этапов 5–6 **не созданы пустыми** — по той же причине, что и на
+Модуль `notifications` (Этап 6b) **не создан пустым** — по той же причине, что и на
 Android: каталог из пустых классов создаёт ложное впечатление готовности.
 
 ### Синхронизация

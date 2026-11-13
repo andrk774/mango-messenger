@@ -26,6 +26,7 @@ import com.mango.core.database.entity.TaskEventEntity
 import com.mango.core.network.MessagingRemoteDataSource
 import com.mango.core.model.Conversation
 import com.mango.core.model.ConversationId
+import com.mango.core.model.ConversationMember
 import com.mango.core.model.MemberRole
 import com.mango.core.model.MessageId
 import com.mango.core.model.SyncStatus
@@ -80,6 +81,7 @@ class DefaultConversationRepository @Inject constructor(
                     lastEventSeq = it.lastEventSeq,
                     draft = it.draft,
                     updatedAt = java.time.Instant.ofEpochMilli(it.updatedAt),
+                    myRole = it.myRole,
                 )
             }
         }
@@ -158,7 +160,7 @@ class DefaultConversationRepository @Inject constructor(
                 runCatching {
                     database.withTransaction {
                         response.value.items.forEach { dto ->
-                            conversationDao.upsert(dto.toEntity())
+                            conversationDao.upsertFromServer(dto.toEntity())
                             dto.lastMessage?.let { message ->
                                 rememberSender(message.senderId, message.senderName)
                                 database.messageDao().upsert(message.toEntity())
@@ -176,7 +178,7 @@ class DefaultConversationRepository @Inject constructor(
                 is Outcome.Failure -> response
                 is Outcome.Success -> {
                     runCatching {
-                        conversationDao.upsert(response.value.toEntity())
+                        conversationDao.upsertFromServer(response.value.toEntity())
                     }.fold(
                         { Outcome.Success(ConversationId(response.value.id)) },
                         { Outcome.Failure(AppError.Storage(it)) },
@@ -189,30 +191,122 @@ class DefaultConversationRepository @Inject constructor(
         withContext(dispatchers.io) {
             when (val response = remote.members(id.value)) {
                 is Outcome.Failure -> response
+                is Outcome.Success -> storeMembers(id, response.value.items)
+            }
+        }
+
+    override fun observeMembersWithRoles(id: ConversationId): Flow<List<ConversationMember>> =
+        conversationDao.observeMembers(id.value).map { rows ->
+            rows.map { row ->
+                ConversationMember(
+                    user = row.user.toDomain(),
+                    role = row.role,
+                    joinedAt = java.time.Instant.ofEpochMilli(row.joinedAt),
+                )
+            }
+        }
+
+    override suspend fun createGroup(title: String, memberIds: List<UserId>): Outcome<ConversationId> =
+        withContext(dispatchers.io) {
+            val trimmed = title.trim()
+            if (trimmed.isEmpty()) {
+                return@withContext Outcome.Failure(AppError.Validation(mapOf("title" to "Нужно название группы")))
+            }
+            if (memberIds.isEmpty()) {
+                return@withContext Outcome.Failure(AppError.Validation(mapOf("members" to "Добавьте хотя бы одного участника")))
+            }
+            when (val response = remote.createGroup(trimmed, memberIds.map { it.value })) {
+                is Outcome.Failure -> response
+                is Outcome.Success -> runCatching {
+                    conversationDao.upsertFromServer(response.value.toEntity())
+                }.fold(
+                    { Outcome.Success(ConversationId(response.value.id)) },
+                    { Outcome.Failure(AppError.Storage(it)) },
+                )
+            }
+        }
+
+    override suspend fun renameGroup(id: ConversationId, title: String): Outcome<Unit> =
+        withContext(dispatchers.io) {
+            val trimmed = title.trim()
+            if (trimmed.isEmpty()) {
+                return@withContext Outcome.Failure(AppError.Validation(mapOf("title" to "Название не может быть пустым")))
+            }
+            when (val response = remote.rename(id.value, trimmed)) {
+                is Outcome.Failure -> response
+                is Outcome.Success -> runCatching { conversationDao.upsertFromServer(response.value.toEntity()) }
+                    .fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
+            }
+        }
+
+    override suspend fun addMembers(id: ConversationId, userIds: List<UserId>): Outcome<Unit> =
+        withContext(dispatchers.io) {
+            if (userIds.isEmpty()) return@withContext Outcome.Success(Unit)
+            when (val response = remote.addMembers(id.value, userIds.map { it.value })) {
+                is Outcome.Failure -> response
+                is Outcome.Success -> storeMembers(id, response.value.items)
+            }
+        }
+
+    override suspend fun removeMember(id: ConversationId, userId: UserId): Outcome<Unit> =
+        withContext(dispatchers.io) {
+            when (val response = remote.removeMember(id.value, userId.value)) {
+                is Outcome.Failure -> response
+                is Outcome.Success -> runCatching { conversationDao.deleteMember(id.value, userId.value) }
+                    .fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
+            }
+        }
+
+    override suspend fun changeRole(id: ConversationId, userId: UserId, role: MemberRole): Outcome<Unit> =
+        withContext(dispatchers.io) {
+            when (val response = remote.changeRole(id.value, userId.value, role.name)) {
+                is Outcome.Failure -> response
+                // Передача владения меняет и свою роль; состав и карточка
+                // перечитываются целиком, чтобы не собирать это по частям.
                 is Outcome.Success -> {
-                    runCatching {
-                        database.withTransaction {
-                            response.value.items.forEach { member ->
-                                userDao.upsert(member.toEntity())
-                                conversationDao.upsertMembers(
-                                    listOf(
-                                        ConversationMemberEntity(
-                                            conversationId = id.value,
-                                            userId = member.userId,
-                                            role = runCatching { MemberRole.valueOf(member.role) }
-                                                .getOrDefault(MemberRole.MEMBER),
-                                            joinedAt = member.joinedAt.toEpochMilli(),
-                                            lastReadSeq = member.lastReadSeq,
-                                            leftAt = null,
-                                        ),
-                                    ),
-                                )
-                            }
-                        }
-                    }.fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
+                    loadMembers(id)
+                    when (val card = remote.conversation(id.value)) {
+                        is Outcome.Success -> runCatching { conversationDao.upsertFromServer(card.value.toEntity()) }
+                        is Outcome.Failure -> Unit
+                    }
+                    Outcome.Success(Unit)
                 }
             }
         }
+
+    override suspend fun leaveGroup(id: ConversationId): Outcome<Unit> = withContext(dispatchers.io) {
+        val me = userDao.currentUserId() ?: return@withContext Outcome.Failure(AppError.Unauthorized)
+        when (val response = remote.removeMember(id.value, me)) {
+            is Outcome.Failure -> response
+            // Чат удаляется с устройства вместе с перепиской (каскад по
+            // внешнему ключу): доступа к ней у ушедшего больше нет.
+            is Outcome.Success -> runCatching { conversationDao.delete(id.value) }
+                .fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
+        }
+    }
+
+    /** Состав с сервера заменяет локальный: выбывшие удаляются. */
+    private suspend fun storeMembers(
+        id: ConversationId,
+        members: List<com.mango.core.network.dto.MemberDto>,
+    ): Outcome<Unit> = runCatching {
+        database.withTransaction {
+            members.forEach { member -> userDao.upsert(member.toEntity()) }
+            conversationDao.upsertMembers(
+                members.map { member ->
+                    ConversationMemberEntity(
+                        conversationId = id.value,
+                        userId = member.userId,
+                        role = runCatching { MemberRole.valueOf(member.role) }.getOrDefault(MemberRole.MEMBER),
+                        joinedAt = member.joinedAt.toEpochMilli(),
+                        lastReadSeq = member.lastReadSeq,
+                        leftAt = null,
+                    )
+                },
+            )
+            conversationDao.deleteMembersExcept(id.value, members.map { it.userId })
+        }
+    }.fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
 
     /**
      * Поиск людей.

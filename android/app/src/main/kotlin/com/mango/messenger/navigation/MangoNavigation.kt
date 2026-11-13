@@ -30,6 +30,10 @@ object Routes {
     const val CONVERSATION = "conversation/{conversationId}"
     fun conversation(conversationId: String) = "conversation/$conversationId"
 
+    /** Сведения о группе: участники, роли, выход. */
+    const val GROUP_INFO = "conversation/{conversationId}/info"
+    fun groupInfo(conversationId: String) = "conversation/$conversationId/info"
+
     /** Детали задачи. Реализуется на Этапе 5. */
     const val TASK_DETAILS = "task/{taskId}"
     fun taskDetails(taskId: String) = "task/$taskId"

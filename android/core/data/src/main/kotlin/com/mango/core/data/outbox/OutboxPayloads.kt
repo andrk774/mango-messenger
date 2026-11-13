@@ -22,6 +22,7 @@ object OpType {
     const val DELETE_TASK = "DELETE_TASK"
     const val ADD_TASK_COMMENT = "ADD_TASK_COMMENT"
     const val SET_TASK_ASSIGNEES = "SET_TASK_ASSIGNEES"
+    const val UPLOAD_ATTACHMENT = "UPLOAD_ATTACHMENT"
 }
 
 object EntityType {
@@ -29,6 +30,7 @@ object EntityType {
     const val CONVERSATION = "CONVERSATION"
     const val TASK = "TASK"
     const val TASK_COMMENT = "TASK_COMMENT"
+    const val ATTACHMENT = "ATTACHMENT"
 }
 
 /** Полезная нагрузка операций. Сериализуется в outbox_operations.payload_json. */
@@ -39,8 +41,33 @@ sealed interface OutboxPayload
 data class SendMessagePayload(
     val conversationId: String,
     val clientMsgId: String,
-    val text: String,
+    /** Подпись; у сообщения с вложением может отсутствовать. */
+    val text: String? = null,
     val replyToId: String? = null,
+    /** Новые поля со значениями по умолчанию: операции из прежней версии читаются как текстовые. */
+    val type: String = "TEXT",
+    val attachmentIds: List<String> = emptyList(),
+) : OutboxPayload
+
+/**
+ * Загрузка файла вложения.
+ *
+ * Файл к этому моменту уже скопирован в личный каталог приложения:
+ * доступ к исходному файлу пользователя (content://) может пропасть
+ * после перезапуска, а очередь должна пережить перезапуск.
+ */
+@Serializable
+data class UploadAttachmentPayload(
+    val attachmentId: String,
+    val conversationId: String,
+    val localPath: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val sha256: String,
+    val fileName: String,
+    val width: Int? = null,
+    val height: Int? = null,
+    val durationMs: Long? = null,
 ) : OutboxPayload
 
 @Serializable

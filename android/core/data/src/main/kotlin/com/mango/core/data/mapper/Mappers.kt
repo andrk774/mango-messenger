@@ -12,6 +12,7 @@ import com.mango.core.model.Message
 import com.mango.core.model.MessageId
 import com.mango.core.model.MessagePreview
 import com.mango.core.model.MessageReference
+import com.mango.core.model.MessageType
 import com.mango.core.model.Reaction
 import com.mango.core.model.Task
 import com.mango.core.model.TaskId
@@ -48,7 +49,9 @@ fun MessageEntity.toDomain(
     clientMsgId = ClientOpId(clientMsgId),
     seq = seq,
     type = type,
-    text = body,
+    // У системного сообщения в body лежит структура события, а не текст.
+    text = body.takeUnless { type == MessageType.SYSTEM },
+    system = if (type == MessageType.SYSTEM) SystemEventCodec.decode(body) else null,
     replyTo = replyToId?.let {
         MessageReference(
             messageId = MessageId(it),
@@ -89,7 +92,8 @@ fun ConversationWithPreview.toDomain(): Conversation = Conversation(
             senderId = UserId(message.senderId),
             senderName = lastMessageSender?.displayName.orEmpty(),
             type = message.type,
-            text = message.body,
+            text = message.body.takeUnless { message.type == MessageType.SYSTEM },
+            system = if (message.type == MessageType.SYSTEM) SystemEventCodec.decode(message.body) else null,
             createdAt = Instant.ofEpochMilli(message.createdAt),
             deliveryStatus = message.deliveryStatus,
             isDeleted = message.deletedAt != null,
@@ -103,6 +107,7 @@ fun ConversationWithPreview.toDomain(): Conversation = Conversation(
     lastEventSeq = conversation.lastEventSeq,
     draft = conversation.draft,
     updatedAt = Instant.ofEpochMilli(conversation.updatedAt),
+    myRole = conversation.myRole,
 )
 
 fun TaskEntity.toDomain(

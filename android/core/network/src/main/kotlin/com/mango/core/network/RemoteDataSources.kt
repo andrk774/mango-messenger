@@ -15,6 +15,10 @@ import com.mango.core.network.dto.ForgotPasswordRequestDto
 import com.mango.core.network.dto.LoginRequestDto
 import com.mango.core.network.dto.MarkReadRequestDto
 import com.mango.core.network.dto.MembersResponseDto
+import com.mango.core.network.dto.MemberDto
+import com.mango.core.network.dto.AddMembersRequestDto
+import com.mango.core.network.dto.ChangeRoleRequestDto
+import com.mango.core.network.dto.UpdateConversationRequestDto
 import com.mango.core.network.dto.MessageDto
 import com.mango.core.network.dto.MessagesResponseDto
 import com.mango.core.network.dto.RegisterRequestDto
@@ -105,6 +109,18 @@ class MessagingRemoteDataSource @Inject constructor(private val api: MessagingAp
 
     suspend fun members(id: String): Outcome<MembersResponseDto> = apiCall { api.members(id) }
 
+    suspend fun rename(id: String, title: String): Outcome<ConversationDto> =
+        apiCall { api.renameConversation(id, UpdateConversationRequestDto(title)) }
+
+    suspend fun addMembers(id: String, userIds: List<String>): Outcome<MembersResponseDto> =
+        apiCall { api.addMembers(id, AddMembersRequestDto(userIds)) }
+
+    suspend fun removeMember(id: String, userId: String): Outcome<Unit> =
+        apiCall { api.removeMember(id, userId) }.map { }
+
+    suspend fun changeRole(id: String, userId: String, role: String): Outcome<MemberDto> =
+        apiCall { api.changeRole(id, userId, ChangeRoleRequestDto(role)) }
+
     suspend fun messages(
         conversationId: String,
         beforeSeq: Long? = null,
@@ -118,14 +134,17 @@ class MessagingRemoteDataSource @Inject constructor(private val api: MessagingAp
         clientMsgId: String,
         body: String?,
         replyToId: String?,
+        type: String = "TEXT",
+        attachmentIds: List<String> = emptyList(),
     ): Outcome<MessageDto> = apiCall {
         api.sendMessage(
             id = conversationId,
             body = SendMessageRequestDto(
                 clientMsgId = clientMsgId,
-                type = "TEXT",
+                type = type,
                 body = body,
                 replyToId = replyToId,
+                attachmentIds = attachmentIds,
             ),
         )
     }

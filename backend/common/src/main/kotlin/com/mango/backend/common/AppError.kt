@@ -42,6 +42,12 @@ sealed class AppException(
     class Validation(val fieldErrors: Map<String, String>) :
         AppException("VALIDATION_FAILED", "Данные не прошли проверку")
 
+    /** 413 — файл больше допустимого. */
+    class PayloadTooLarge(message: String) : AppException("PAYLOAD_TOO_LARGE", message)
+
+    /** 415 — тип файла не разрешён или содержимое не совпадает с заявленным типом. */
+    class UnsupportedMediaType(message: String) : AppException("UNSUPPORTED_MEDIA_TYPE", message)
+
     /** 429 — превышен лимит. [retryAfterSeconds] уходит в заголовок Retry-After. */
     class RateLimited(val retryAfterSeconds: Long) :
         AppException("RATE_LIMITED", "Слишком много запросов")

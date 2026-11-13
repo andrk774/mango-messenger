@@ -51,6 +51,9 @@ dependencies {
     implementation(libs.navigation.compose)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.compose.material.icons.extended)
+    // Показ картинок-вложений из локальных файлов. Сетевой модуль Coil
+    // не нужен: файлы скачивает слой данных по подписанной ссылке.
+    implementation(libs.coil.compose)
     implementation(libs.lifecycle.process)
     implementation(libs.work.runtime)
     implementation(libs.hilt.work)

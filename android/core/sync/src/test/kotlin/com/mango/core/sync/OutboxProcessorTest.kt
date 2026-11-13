@@ -22,6 +22,11 @@ import com.mango.core.model.PresenceStatus
 import com.mango.core.model.SyncStatus
 import com.mango.core.network.MessagingRemoteDataSource
 import com.mango.core.network.api.MessagingApi
+import com.mango.core.network.TasksRemoteDataSource
+import com.mango.core.network.AttachmentsRemoteDataSource
+import com.mango.core.network.api.AttachmentsApi
+import com.mango.core.network.api.BlobTransferApi
+import com.mango.core.network.api.TasksApi
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import mockwebserver3.MockResponse
@@ -74,16 +79,22 @@ class OutboxProcessorTest {
             MangoDatabase::class.java,
         ).allowMainThreadQueries().build()
 
-        val api = Retrofit.Builder()
+        val retrofit = Retrofit.Builder()
             .baseUrl(server.url("/"))
             .client(OkHttpClient())
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
-            .create(MessagingApi::class.java)
+        val api = retrofit.create(MessagingApi::class.java)
 
         processor = OutboxProcessor(
             database = database,
             remote = MessagingRemoteDataSource(api),
+            tasksRemote = TasksRemoteDataSource(retrofit.create(TasksApi::class.java)),
+            attachmentsRemote = AttachmentsRemoteDataSource(
+                retrofit.create(AttachmentsApi::class.java),
+                retrofit.create(BlobTransferApi::class.java),
+            ),
+            conflicts = TaskConflictNotifier(),
             applier = EventApplier(database, json, NoOpLogger()),
             time = time,
             logger = NoOpLogger(),

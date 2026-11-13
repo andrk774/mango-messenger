@@ -29,6 +29,23 @@ data class SendMessageRequest(
     val type: String = "TEXT",
     val body: String? = null,
     val replyToId: UUID? = null,
+    /**
+     * Загруженные заранее вложения (см. `/v1/attachments/upload-ticket`).
+     * Привязываются к сообщению в той же транзакции, что и его вставка.
+     */
+    val attachmentIds: List<UUID> = emptyList(),
+)
+
+@Serializable
+data class UpdateConversationRequest(val title: String)
+
+@Serializable
+data class AddMembersRequest(val userIds: List<UUID>)
+
+@Serializable
+data class ChangeRoleRequest(
+    /** OWNER (передача владения), ADMIN или MEMBER. */
+    val role: String,
 )
 
 @Serializable
@@ -51,6 +68,40 @@ data class MessageReferenceDto(
     val isUnavailable: Boolean = false,
 )
 
+/** Вложение в составе сообщения. Сам файл выдаётся по временной ссылке. */
+@Serializable
+data class AttachmentDto(
+    val id: UUID,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val fileName: String,
+    val width: Int? = null,
+    val height: Int? = null,
+    val durationMs: Int? = null,
+)
+
+@Serializable
+data class SystemTargetDto(val userId: UUID, val name: String)
+
+/**
+ * Содержимое системного сообщения.
+ *
+ * Сервер хранит и отдаёт структуру, а не готовую фразу: текст
+ * собирает клиент на языке интерфейса. Готовая фраза на сервере
+ * привязала бы историю к одному языку и к грамматическому роду,
+ * которого сервер не знает.
+ */
+@Serializable
+data class SystemEventDto(
+    /** MEMBERS_ADDED, MEMBER_REMOVED, MEMBER_LEFT, TITLE_CHANGED, ROLE_CHANGED, OWNER_CHANGED. */
+    val kind: String,
+    val actorId: UUID,
+    val actorName: String,
+    val targets: List<SystemTargetDto> = emptyList(),
+    val title: String? = null,
+    val role: String? = null,
+)
+
 @Serializable
 data class MessageDto(
     val id: UUID,
@@ -67,6 +118,9 @@ data class MessageDto(
     val deletedAt: Instant? = null,
     val pinnedAt: Instant? = null,
     val createdAt: Instant,
+    val attachments: List<AttachmentDto> = emptyList(),
+    /** Только для `type = SYSTEM`; `body` у таких сообщений пуст. */
+    val system: SystemEventDto? = null,
 )
 
 @Serializable
@@ -153,4 +207,29 @@ data class ReadMarkerPayload(
     val conversationId: UUID,
     val userId: UUID,
     val seq: Long,
+)
+
+/** Новые участники — остальным, чтобы обновить список участников. */
+@Serializable
+data class MembersAddedPayload(
+    val conversationId: UUID,
+    val members: List<MemberDto>,
+)
+
+/**
+ * Участник покинул чат или был удалён.
+ *
+ * Уходит и оставшимся, и самому выбывшему: его устройство должно
+ * убрать чат из списка, иначе он остался бы там навсегда.
+ */
+@Serializable
+data class MemberRemovedPayload(
+    val conversationId: UUID,
+    val userId: UUID,
+)
+
+@Serializable
+data class MemberUpdatedPayload(
+    val conversationId: UUID,
+    val member: MemberDto,
 )

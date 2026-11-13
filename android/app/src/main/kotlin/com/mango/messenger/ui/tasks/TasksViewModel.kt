@@ -10,6 +10,8 @@ import com.mango.core.model.TaskId
 import com.mango.core.model.TaskPriority
 import com.mango.core.model.TaskScope
 import com.mango.core.model.TaskStatus
+import com.mango.core.sync.SyncEngine
+import com.mango.core.sync.TaskConflictNotifier
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BufferOverflow
@@ -51,6 +53,8 @@ sealed interface TasksEvent {
 @HiltViewModel
 class TasksViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
+    private val syncEngine: SyncEngine,
+    conflictNotifier: TaskConflictNotifier,
 ) : ViewModel() {
 
     private val scope = MutableStateFlow(TaskScope.MINE)
@@ -86,6 +90,38 @@ class TasksViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = TasksUiState(),
     )
+
+    init {
+        refresh()
+
+        // Правка, проигравшая конкурирующему изменению, не должна исчезать
+        // молча: пользователь узнаёт об этом сразу, а не обнаруживает сам.
+        viewModelScope.launch {
+            conflictNotifier.conflicts.collect { conflict ->
+                _events.emit(
+                    TasksEvent.Error(
+                        "Задача «${conflict.taskTitle}» изменена на другом устройстве — " +
+                            "показана актуальная версия",
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Загрузка задач с сервера.
+     *
+     * Экран не ждёт её: он уже показывает локальные данные. Отсутствие
+     * сети здесь не ошибка — просто данные остались прежними.
+     */
+    fun refresh() {
+        viewModelScope.launch {
+            val result = syncEngine.refreshTasks()
+            if (result is Outcome.Failure && result.error !is com.mango.core.common.AppError.Network) {
+                _events.emit(TasksEvent.Error(result.error.toUserMessage()))
+            }
+        }
+    }
 
     fun onScopeChange(newScope: TaskScope) {
         scope.value = newScope
@@ -161,4 +197,17 @@ internal fun com.mango.core.common.AppError.toUserMessage(): String = when (this
     is com.mango.core.common.AppError.RateLimited -> "Слишком много запросов, попробуйте позже"
     is com.mango.core.common.AppError.Server -> "Ошибка сервера. Повторим автоматически"
     is com.mango.core.common.AppError.Unknown -> "Непредвиденная ошибка"
+}
+
+/**
+ * Текст отказа для операций, которые не ставятся в очередь.
+ *
+ * Общий текст сетевой ошибки обещает «отправим позже» — для управления
+ * группой и создания чатов это неправда: они выполняются только при
+ * наличии сети, и пользователь должен понять, что действие не случилось.
+ */
+internal fun com.mango.core.common.AppError.toOnlineOnlyMessage(): String = when (this) {
+    is com.mango.core.common.AppError.Network, is com.mango.core.common.AppError.Timeout ->
+        "Нет подключения. Это действие требует сети — повторите, когда связь появится"
+    else -> toUserMessage()
 }

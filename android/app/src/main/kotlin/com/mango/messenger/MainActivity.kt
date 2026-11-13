@@ -161,7 +161,18 @@ private fun MangoApp(onSignOut: () -> Unit) {
             }
 
             composable(Routes.CONVERSATION) {
-                ConversationScreen(onNavigateBack = navController::popBackStack)
+                ConversationScreen(
+                    onNavigateBack = navController::popBackStack,
+                    onOpenInfo = { id -> navController.navigate(Routes.groupInfo(id)) },
+                )
+            }
+            composable(Routes.GROUP_INFO) {
+                com.mango.messenger.ui.group.GroupInfoScreen(
+                    onNavigateBack = navController::popBackStack,
+                    // После выхода из группы её переписки больше нет —
+                    // возврат идёт сразу к списку чатов, минуя её экран.
+                    onLeft = { navController.popBackStack(Routes.CHATS, inclusive = false) },
+                )
             }
             composable(Routes.TASK_DETAILS) {
                 NotImplementedScreen(

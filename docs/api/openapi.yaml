@@ -365,27 +365,152 @@ paths:
                   items: { type: string, format: uuid }
                 title: { type: string, maxLength: 128 }
       responses:
-        '201':
+        '200':
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Conversation' }
           description: |
-            Чат создан. Для DIRECT при существующем чате возвращается
-            существующий — повторное открытие переписки не должно
-            создавать второй личный чат.
+            Чат создан или уже существовал. Для DIRECT при существующем
+            чате возвращается существующий — повторное открытие переписки
+            не должно создавать второй личный чат, поэтому код один и тот же.
+            Событие `CONVERSATION_CREATED` каждый участник получает со своей
+            карточкой: заголовок личного чата и роль у каждого свои.
+
+  /v1/conversations/{conversationId}:
+    patch:
+      x-implemented: true
+      tags: [conversations]
+      summary: Переименование группы
+      description: |
+        Администратор или владелец. В историю добавляется системное
+        сообщение `TITLE_CHANGED`, участники получают `CONVERSATION_UPDATED`.
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+          description: Карточка чата после изменения
+        '400': { description: Чат не групповой }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/conversations/{conversationId}/members:
+    get:
+      x-implemented: true
+      tags: [conversations]
+      summary: Участники чата
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Member' }
+          description: Действующие участники
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      x-implemented: true
+      tags: [conversations]
+      summary: Добавление участников
+      description: |
+        Администратор или владелец, только в группе. Уже состоящие
+        в группе пропускаются — повтор запроса безопасен и не порождает
+        второго системного сообщения. Новые участники получают
+        `CONVERSATION_CREATED`, остальные — `CONVERSATION_MEMBER_ADDED`.
+        История группы новым участникам видна целиком.
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userIds]
+              properties:
+                userIds:
+                  type: array
+                  items: { type: string, format: uuid }
+                  maxItems: 200
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Member' }
+          description: Состав после изменения
+        '400': { description: Чат не групповой }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { description: Пользователи не найдены или превышен предел участников (201) }
 
   /v1/conversations/{conversationId}/members/{userId}:
     delete:
+      x-implemented: true
       tags: [conversations]
-      summary: Удаление участника
+      summary: Удаление участника или выход из группы
       description: |
-        Требует роль OWNER или ADMIN. Полномочия проверяются на сервере;
-        отсутствие прав даёт 403 независимо от интерфейса клиента.
+        Свой `userId` — выход, доступен любому участнику. Чужой: владелец
+        удаляет любого, администратор — только рядового участника.
+        Если уходит владелец, владение переходит самому давнему
+        администратору, а при их отсутствии — самому давнему участнику.
+        Ушёл последний — группа удаляется.
+
+        Выбывший получает `CONVERSATION_MEMBER_REMOVED` и теряет доступ
+        к истории, файлам и задачам группы. Повтор удаления — 204.
       parameters:
         - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '204': { description: Участник удалён }
+        '204': { description: Участник удалён (или уже не состоял) }
+        '400': { description: Чат не групповой }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/conversations/{conversationId}/members/{userId}/role:
+    put:
+      x-implemented: true
+      tags: [conversations]
+      summary: Смена роли участника
+      description: |
+        Только владелец. Роль `OWNER` — передача владения: прежний
+        владелец становится администратором.
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [OWNER, ADMIN, MEMBER] }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Member' }
+          description: Участник с новой ролью
+        '400': { description: Чат не групповой или попытка сменить свою роль }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /v1/conversations/{conversationId}/read:
@@ -460,7 +585,13 @@ paths:
                 replyToId: { type: string, format: uuid, nullable: true }
                 attachmentIds:
                   type: array
+                  maxItems: 10
                   items: { type: string, format: uuid }
+                  description: |
+                    Загруженные вызывающим для этого чата и прошедшие проверку
+                    вложения. Обязательны для IMAGE/VIDEO/VOICE/FILE, запрещены
+                    для TEXT. Привязываются в той же транзакции; не привязалось
+                    хоть одно — 422, сообщение не создаётся.
       responses:
         '201':
           content:
@@ -538,13 +669,17 @@ paths:
     post:
       tags: [tasks, messages]
       summary: Создание задачи из сообщения
+      x-implemented: true
       description: |
         Ключевая возможность продукта. Сервер сохраняет ссылку на сообщение
-        и снапшот его текста, поэтому последующее удаление сообщения
-        не лишает задачу контекста.
+        и снимок его текста, поэтому последующее удаление сообщения
+        не лишает задачу контекста. Задача привязывается к чату сообщения;
+        создать её может только участник этого чата.
+
+        Идемпотентность — по `taskId`: повтор с тем же идентификатором
+        возвращает 200 и уже созданную задачу.
       parameters:
         - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -553,20 +688,28 @@ paths:
               type: object
               required: [taskId, title]
               properties:
-                taskId: { type: string, format: uuid, description: UUIDv7 от клиента }
+                taskId: { type: string, format: uuid, description: UUID от клиента — ключ идемпотентности }
                 title: { type: string, maxLength: 256 }
                 description: { type: string, maxLength: 8192 }
-                priority: { type: string, enum: [LOW, MEDIUM, HIGH, URGENT] }
+                priority: { type: string, enum: [LOW, MEDIUM, HIGH, URGENT], default: MEDIUM }
                 dueAt: { type: string, format: date-time, nullable: true }
                 assigneeIds:
                   type: array
                   items: { type: string, format: uuid }
+                  description: Только участники чата
       responses:
         '201':
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Task' }
           description: Задача создана
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+          description: Повтор — задача уже была создана этим запросом
+        '403':
+          description: Сообщение не найдено, удалено или вызывающий не участник чата (не различаются)
 
   # ───────────────────────── tasks ─────────────────────────
 
@@ -574,30 +717,45 @@ paths:
     get:
       tags: [tasks]
       summary: Список задач
+      x-implemented: true
+      description: |
+        Возвращаются только видимые вызывающему задачи: созданные им,
+        назначенные ему и задачи чатов, где он участник.
       parameters:
-        - { name: scope, in: query, schema: { type: string, enum: [mine, team, chat], default: mine } }
-        - { name: status, in: query, schema: { type: array, items: { type: string, enum: [TODO, IN_PROGRESS, REVIEW, DONE, CANCELLED] } } }
-        - { name: assigneeId, in: query, schema: { type: string, format: uuid } }
+        - name: scope
+          in: query
+          schema: { type: string, enum: [mine, team, chat, from_chats], default: mine }
+          description: |
+            `mine` — создал или назначен; `team` — все видимые;
+            `chat` — задачи одного чата (нужен `conversationId`);
+            `from_chats` — созданные из сообщений.
         - { name: conversationId, in: query, schema: { type: string, format: uuid } }
-        - { name: dueBefore, in: query, schema: { type: string, format: date-time } }
-        - { name: cursor, in: query, schema: { type: string } }
+        - name: status
+          in: query
+          schema: { type: array, items: { type: string, enum: [TODO, IN_PROGRESS, REVIEW, DONE, CANCELLED] } }
+          description: Можно повторять параметр или перечислить через запятую
+        - { name: includeCompleted, in: query, schema: { type: boolean, default: false } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500 } }
       responses:
         '200':
           content:
             application/json:
               schema:
                 type: object
+                required: [items]
                 properties:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/Task' }
-                  nextCursor: { type: string, nullable: true }
-          description: Страница задач
+          description: Задачи
     post:
       tags: [tasks]
       summary: Создание задачи
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      x-implemented: true
+      description: |
+        Идемпотентность — по `taskId`. Исполнителями личной задачи
+        (без чата) может быть только создатель; задачи чата — только
+        его участники.
       requestBody:
         required: true
         content:
@@ -609,24 +767,48 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Task' }
           description: Задача создана
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+          description: Повтор — задача уже существует
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /v1/tasks/{taskId}:
+    get:
+      tags: [tasks]
+      summary: Задача
+      x-implemented: true
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+          description: Задача
+        '403':
+          description: Задача не найдена, удалена или не видна вызывающему — ответы намеренно одинаковы
     patch:
       tags: [tasks]
       summary: Частичное изменение задачи с разрешением конфликтов
+      x-implemented: true
       description: |
         Отправляются **только изменённые поля** вместе с `baseVersion`
         и метками времени изменения по каждому полю.
 
-        - `baseVersion == version` — изменения применяются, `version++`.
-        - `baseVersion < version` — сервер применяет LWW по каждому полю
-          и возвращает 200 с итоговым объектом и списком `conflicts`.
-          Клиент принимает серверный объект как истину.
+        - `baseVersion == version` — клиент видел актуальное состояние,
+          изменения применяются как есть.
+        - `baseVersion < version` — сервер сравнивает метки по каждому полю
+          (LWW); метки из будущего ограничиваются временем сервера,
+          при равенстве статусов побеждает более «завершённый».
+          Проигравшие поля перечисляются в `conflicts` и записываются
+          в историю как `EDIT_REJECTED`.
 
-        Подробности: `docs/architecture/sync-model.md`, раздел 6.
+        Ответ — итоговое состояние; клиент принимает его как истину.
+        Подробности: ADR-0005 и `docs/architecture/sync-model.md`.
       parameters:
         - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -638,7 +820,10 @@ paths:
                 baseVersion: { type: integer, format: int64 }
                 changedFields:
                   type: object
-                  additionalProperties: true
+                  description: |
+                    Ключи: title, description, status, priority, due_at, remind_at.
+                    Значения — строки (даты в ISO-8601) или null для очистки.
+                  additionalProperties: { type: string, nullable: true }
                   example: { status: DONE, priority: HIGH }
                 fieldTimestamps:
                   type: object
@@ -649,29 +834,42 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/Task'
-                  - type: object
-                    properties:
-                      conflicts:
-                        type: array
-                        items: { type: string }
-                        description: Поля, где победила серверная версия
+                type: object
+                required: [task, conflicts]
+                properties:
+                  task: { $ref: '#/components/schemas/Task' }
+                  conflicts:
+                    type: array
+                    items: { type: string }
+                    description: Поля, где правка проиграла
           description: Актуальное состояние задачи
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { description: Задача не найдена или удалена }
+        '403':
+          description: Задача не найдена, удалена или не видна вызывающему
+    delete:
+      tags: [tasks]
+      summary: Удаление задачи
+      x-implemented: true
+      description: Мягкое удаление; доступно только создателю.
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Удалена; повтор автором тоже даёт 204 без нового события }
+        '403':
+          description: Вызывающий не автор, или задача не найдена / не видна
 
   /v1/tasks/{taskId}/assignees:
     post:
       tags: [tasks]
       summary: Изменение набора исполнителей
+      x-implemented: true
       description: |
-        Передаются списки добавления и удаления, а не итоговый набор.
-        Сервер сливает их как OR-Set, поэтому два устройства, назначившие
-        разных людей, не затирают друг друга.
+        Передаются списки добавления и удаления, а не итоговый набор,
+        поэтому два устройства, назначившие разных людей, не затирают
+        друг друга. Для одного и того же человека побеждает операция,
+        пришедшая на сервер позже (метки назначения и снятия строго
+        возрастают). Подробности — ADR-0005.
       parameters:
         - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -687,11 +885,13 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Task' }
           description: Итоговый набор исполнителей
+        '403': { $ref: '#/components/responses/Forbidden' }
 
-  /v1/tasks/{taskId}/events:
+  /v1/tasks/{taskId}/comments:
     get:
       tags: [tasks]
-      summary: История изменений задачи
+      summary: Комментарии к задаче
+      x-implemented: true
       parameters:
         - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
@@ -699,57 +899,184 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/TaskEvent' }
-          description: |
-            Полная история. Содержит в том числе изменения, проигравшие
-            при разрешении конфликта, — это делает любой конфликт разбираемым.
-
-  # ─────────────────────── attachments ───────────────────────
-
-  /v1/attachments/upload-ticket:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TaskComment' }
+          description: Комментарии в порядке создания
     post:
-      tags: [attachments]
-      summary: Получение presigned URL для загрузки
-      description: |
-        Файл загружается напрямую в объектное хранилище, минуя backend.
-        Ограничение размера задаётся в presigned-политике, а не только
-        на клиенте.
+      tags: [tasks]
+      summary: Добавление комментария
+      x-implemented: true
+      description: Идемпотентность — по `clientOpId` в пределах автора и задачи.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [mimeType, sizeBytes, checksumSha256]
+              required: [clientOpId, body]
               properties:
-                mimeType: { type: string }
-                sizeBytes: { type: integer, format: int64, maximum: 104857600 }
-                checksumSha256: { type: string }
-                fileName: { type: string }
+                clientOpId: { type: string, maxLength: 64 }
+                body: { type: string, maxLength: 4096 }
       responses:
         '201':
           content:
             application/json:
+              schema: { $ref: '#/components/schemas/TaskComment' }
+          description: Комментарий добавлен
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskComment' }
+          description: Повтор — комментарий уже был добавлен
+
+  /v1/tasks/{taskId}/events:
+    get:
+      tags: [tasks]
+      summary: История изменений задачи
+      x-implemented: true
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          content:
+            application/json:
               schema:
                 type: object
+                required: [items]
                 properties:
-                  attachmentId: { type: string, format: uuid }
-                  uploadUrl: { type: string, format: uri }
-                  expiresAt: { type: string, format: date-time }
-          description: Разрешение на загрузку
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TaskEvent' }
+          description: |
+            Полная история. Содержит в том числе правки, проигравшие
+            при разрешении конфликта (`EDIT_REJECTED`), — это делает
+            любой конфликт разбираемым.
+
+  # ─────────────────────── attachments ───────────────────────
+
+  /v1/attachments/upload-ticket:
+    post:
+      x-implemented: true
+      tags: [attachments]
+      summary: Разрешение на загрузку файла
+      description: |
+        Клиент заявляет тип, размер и SHA-256 файла. Тип проверяется по
+        белому списку, размер — по пределам (картинки 20 МБ, прочее 100 МБ),
+        вызывающий должен состоять в чате. Ответ — ссылка для PUT,
+        действительная 15 минут.
+
+        Идемпотентность — по `attachmentId`: повтор с теми же данными
+        возвращает 200 и новое разрешение; `uploaded: true` означает,
+        что файл уже принят. Не более 50 непривязанных разрешений
+        за сутки на пользователя.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [attachmentId, conversationId, mimeType, sizeBytes, checksumSha256]
+              properties:
+                attachmentId: { type: string, format: uuid }
+                conversationId: { type: string, format: uuid }
+                mimeType:
+                  type: string
+                  description: |
+                    image/jpeg, image/png, image/gif, image/webp, image/heic,
+                    video/mp4, video/webm, audio/ogg, audio/mpeg, audio/mp4,
+                    audio/aac, audio/webm, application/pdf, application/zip,
+                    документы Office (OOXML), text/plain.
+                sizeBytes: { type: integer, format: int64, minimum: 1 }
+                checksumSha256: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+                fileName: { type: string, maxLength: 255 }
+                width: { type: integer, nullable: true }
+                height: { type: integer, nullable: true }
+                durationMs: { type: integer, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadTicket' }
+          description: Разрешение выдано
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadTicket' }
+          description: Повтор — разрешение для уже заявленного файла
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Идентификатор уже использован для другого файла, или файл отклонён }
         '413': { description: Превышен допустимый размер }
         '415': { description: Недопустимый тип файла }
+        '429': { description: Слишком много непривязанных разрешений }
+
+  /v1/attachments/{attachmentId}/content:
+    put:
+      x-implemented: true
+      tags: [attachments]
+      summary: Загрузка содержимого по подписанной ссылке
+      description: |
+        Вызывается по `uploadUrl` из разрешения; аутентификация — подписью
+        в ссылке, токен не нужен. Сервер принимает не больше заявленного
+        размера, сверяет размер и SHA-256, затем сигнатуру содержимого
+        с заявленным типом.
+
+        Несовпадение размера или хеша — 400, разрешение остаётся
+        действительным (повтор). Несовпадение типа — 415, файл отклонён
+        окончательно. Повтор уже принятого файла — 204.
+      security: []
+      parameters:
+        - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: expires, in: query, required: true, schema: { type: integer, format: int64 } }
+        - { name: signature, in: query, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '204': { description: Файл принят }
+        '400': { description: Размер или контрольная сумма не совпали }
+        '403': { description: Ссылка недействительна или истекла }
+        '409': { description: Файл ранее отклонён проверкой }
+        '413': { description: Больше заявленного размера }
+        '415': { description: Содержимое не соответствует заявленному типу }
+    get:
+      x-implemented: true
+      tags: [attachments]
+      summary: Скачивание по подписанной ссылке
+      description: |
+        Вызывается по `url` из `/url`. Картинки отдаются с
+        `Content-Disposition: inline`, остальное — `attachment`.
+        Всегда добавляется `Content-Security-Policy: sandbox`.
+      security: []
+      parameters:
+        - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: expires, in: query, required: true, schema: { type: integer, format: int64 } }
+        - { name: signature, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Содержимое файла
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '403': { description: Ссылка недействительна, истекла или файл недоступен }
 
   /v1/attachments/{attachmentId}/url:
     get:
+      x-implemented: true
       tags: [attachments]
-      summary: Получение временной ссылки на скачивание
+      summary: Временная ссылка на скачивание
       description: |
-        Ссылка выдаётся только после проверки прав доступа и имеет
-        короткий срок жизни. Прямой доступ к объектному хранилищу закрыт.
+        Права проверяются здесь: автор видит свой файл всегда, остальные —
+        только если файл в неудалённом сообщении чата, где они состоят
+        сейчас. Ссылка живёт 5 минут; может быть относительной (от адреса
+        API) или абсолютной.
       parameters:
         - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
@@ -758,12 +1085,16 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [url, expiresAt]
                 properties:
-                  url: { type: string, format: uri }
+                  url: { type: string }
                   expiresAt: { type: string, format: date-time }
+                  mimeType: { type: string }
+                  sizeBytes: { type: integer, format: int64 }
+                  fileName: { type: string }
           description: Временная ссылка
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { description: Файл ещё не прошёл проверку безопасности }
+        '409': { description: Файл ещё не загружен или не прошёл проверку }
 
   # ───────────────────────── sync ─────────────────────────
 
@@ -1026,6 +1357,11 @@ components:
         attachments:
           type: array
           items: { $ref: '#/components/schemas/Attachment' }
+        system:
+          oneOf:
+            - $ref: '#/components/schemas/SystemEvent'
+            - type: 'null'
+          description: Только для `type = SYSTEM`; `body` у таких сообщений пуст.
         reactions:
           type: array
           items:
@@ -1060,7 +1396,54 @@ components:
         width: { type: integer, nullable: true }
         height: { type: integer, nullable: true }
         durationMs: { type: integer, nullable: true }
-        scanStatus: { type: string, enum: [PENDING, CLEAN, REJECTED] }
+
+    Member:
+      type: object
+      required: [userId, username, displayName, role, joinedAt, lastReadSeq]
+      properties:
+        userId: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        avatarUrl: { type: string, nullable: true }
+        role: { type: string, enum: [OWNER, ADMIN, MEMBER] }
+        joinedAt: { type: string, format: date-time }
+        lastReadSeq: { type: integer, format: int64 }
+
+    UploadTicket:
+      type: object
+      required: [attachmentId, uploadUrl, expiresAt, uploaded]
+      properties:
+        attachmentId: { type: string, format: uuid }
+        uploadUrl:
+          type: string
+          description: Для PUT; относительная (от адреса API) или абсолютная.
+        expiresAt: { type: string, format: date-time }
+        uploaded: { type: boolean, description: Файл уже принят — загружать не нужно }
+
+    SystemEvent:
+      type: object
+      required: [kind, actorId, actorName]
+      description: |
+        Структура системного сообщения. Текст собирает клиент на языке
+        интерфейса — сервер не знает ни языка, ни грамматического рода.
+      properties:
+        kind:
+          type: string
+          enum: [MEMBERS_ADDED, MEMBER_REMOVED, MEMBER_LEFT, TITLE_CHANGED, ROLE_CHANGED, OWNER_CHANGED]
+        actorId: { type: string, format: uuid }
+        actorName: { type: string }
+        targets:
+          type: array
+          items:
+            type: object
+            properties:
+              userId: { type: string, format: uuid }
+              name: { type: string }
+        title: { type: string, nullable: true, description: Для TITLE_CHANGED }
+        role:
+          type: string
+          nullable: true
+          description: Для ROLE_CHANGED/OWNER_CHANGED; у MEMBER_LEFT — OWNER, если владение перешло
 
     CreateTaskRequest:
       type: object
@@ -1090,8 +1473,9 @@ components:
         createdBy: { type: string, format: uuid }
         assignees:
           type: array
-          items: { $ref: '#/components/schemas/User' }
+          items: { $ref: '#/components/schemas/TaskAssignee' }
         conversationId: { type: string, format: uuid, nullable: true }
+        conversationTitle: { type: string, nullable: true }
         source:
           oneOf:
             - $ref: '#/components/schemas/TaskSource'
@@ -1106,6 +1490,10 @@ components:
           type: integer
           format: int64
           description: Передаётся обратно как baseVersion при PATCH
+        fieldVersions:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: Метка последнего принятого изменения по каждому полю, epoch millis
         completedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -1120,7 +1508,30 @@ components:
         conversationId: { type: string, format: uuid }
         senderName: { type: string }
         textSnapshot: { type: string, nullable: true }
+        sourceCreatedAt: { type: string, format: date-time, nullable: true }
         isSourceUnavailable: { type: boolean }
+
+    TaskAssignee:
+      type: object
+      required: [userId, username, displayName]
+      properties:
+        userId: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        avatarUrl: { type: string, nullable: true }
+
+    TaskComment:
+      type: object
+      required: [id, taskId, authorId, clientOpId, body, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        authorId: { type: string, format: uuid }
+        authorName: { type: string }
+        clientOpId: { type: string }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+        editedAt: { type: string, format: date-time, nullable: true }
 
     TaskEvent:
       type: object
@@ -1131,8 +1542,12 @@ components:
         type:
           type: string
           enum: [CREATED, STATUS_CHANGED, PRIORITY_CHANGED, ASSIGNED, UNASSIGNED,
-                 DUE_DATE_CHANGED, TITLE_CHANGED, DESCRIPTION_CHANGED,
-                 COMMENT_ADDED, ATTACHMENT_ADDED, DELETED, RESTORED]
+                 DUE_DATE_CHANGED, REMINDER_CHANGED, TITLE_CHANGED, DESCRIPTION_CHANGED,
+                 FIELD_CHANGED, EDIT_REJECTED, COMMENT_ADDED, DELETED]
+          description: |
+            `EDIT_REJECTED` — правка, проигравшая при разрешении конфликта;
+            в `newValue` — отклонённое значение.
+        actorName: { type: string, nullable: true }
         field: { type: string, nullable: true }
         oldValue: { nullable: true }
         newValue: { nullable: true }

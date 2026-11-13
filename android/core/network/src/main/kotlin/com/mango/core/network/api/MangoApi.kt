@@ -10,6 +10,10 @@ import com.mango.core.network.dto.ForgotPasswordRequestDto
 import com.mango.core.network.dto.LoginRequestDto
 import com.mango.core.network.dto.MarkReadRequestDto
 import com.mango.core.network.dto.MembersResponseDto
+import com.mango.core.network.dto.MemberDto
+import com.mango.core.network.dto.AddMembersRequestDto
+import com.mango.core.network.dto.ChangeRoleRequestDto
+import com.mango.core.network.dto.UpdateConversationRequestDto
 import com.mango.core.network.dto.MessageDto
 import com.mango.core.network.dto.MessagesResponseDto
 import com.mango.core.network.dto.RefreshRequestDto
@@ -88,6 +92,32 @@ interface MessagingApi {
 
     @GET("v1/conversations/{id}/members")
     suspend fun members(@Path("id") id: String): Response<MembersResponseDto>
+
+    @PATCH("v1/conversations/{id}")
+    suspend fun renameConversation(
+        @Path("id") id: String,
+        @Body body: UpdateConversationRequestDto,
+    ): Response<ConversationDto>
+
+    @POST("v1/conversations/{id}/members")
+    suspend fun addMembers(
+        @Path("id") id: String,
+        @Body body: AddMembersRequestDto,
+    ): Response<MembersResponseDto>
+
+    /** Свой идентификатор — выход из группы. */
+    @DELETE("v1/conversations/{id}/members/{userId}")
+    suspend fun removeMember(
+        @Path("id") id: String,
+        @Path("userId") userId: String,
+    ): Response<Unit>
+
+    @PUT("v1/conversations/{id}/members/{userId}/role")
+    suspend fun changeRole(
+        @Path("id") id: String,
+        @Path("userId") userId: String,
+        @Body body: ChangeRoleRequestDto,
+    ): Response<MemberDto>
 
     @PUT("v1/conversations/{id}/read")
     suspend fun markRead(

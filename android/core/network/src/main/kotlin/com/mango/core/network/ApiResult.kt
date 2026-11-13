@@ -61,6 +61,10 @@ internal fun <T> Response<T>.toAppError(): AppError {
         422 -> AppError.Validation(
             parsed?.fieldErrors ?: mapOf("request" to (parsed?.message ?: "Данные не приняты")),
         )
+        // Размер и тип файла не изменятся от повтора — это отказ по данным,
+        // и пользователь должен увидеть понятную причину.
+        413 -> AppError.Validation(mapOf("file" to (parsed?.message ?: "Файл слишком большой")))
+        415 -> AppError.Validation(mapOf("file" to (parsed?.message ?: "Тип файла не поддерживается")))
         429 -> AppError.RateLimited(
             headers()["Retry-After"]?.toLongOrNull(),
         )

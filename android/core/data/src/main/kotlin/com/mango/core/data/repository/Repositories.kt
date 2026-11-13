@@ -54,6 +54,21 @@ interface ConversationRepository {
 
     suspend fun loadMembers(id: ConversationId): Outcome<Unit>
 
+    /** Участники с ролями — для экрана группы. */
+    fun observeMembersWithRoles(id: ConversationId): Flow<List<com.mango.core.model.ConversationMember>>
+
+    // Управление группой выполняется только при наличии сети: решение
+    // о правах принимает сервер, и оптимистичный показ «участник удалён»
+    // с последующим откатом вводил бы в заблуждение.
+    suspend fun createGroup(title: String, memberIds: List<UserId>): Outcome<ConversationId>
+    suspend fun renameGroup(id: ConversationId, title: String): Outcome<Unit>
+    suspend fun addMembers(id: ConversationId, userIds: List<UserId>): Outcome<Unit>
+    suspend fun removeMember(id: ConversationId, userId: UserId): Outcome<Unit>
+    suspend fun changeRole(id: ConversationId, userId: UserId, role: com.mango.core.model.MemberRole): Outcome<Unit>
+
+    /** Выход из группы; чат удаляется с устройства. */
+    suspend fun leaveGroup(id: ConversationId): Outcome<Unit>
+
     /** Поиск людей для начала переписки. */
     suspend fun searchPeople(query: String): Outcome<List<User>>
 }
@@ -73,6 +88,27 @@ interface MessageRepository {
         text: String,
         replyTo: MessageId? = null,
     ): Outcome<ClientOpId>
+
+    /**
+     * Отправка файла.
+     *
+     * Файл копируется в личный каталог приложения, сообщение сразу
+     * появляется в переписке, а загрузка и отправка уходят в очередь:
+     * сначала файл, затем сообщение, зависящее от него.
+     */
+    suspend fun sendAttachment(
+        conversationId: ConversationId,
+        uri: android.net.Uri,
+        caption: String? = null,
+    ): Outcome<ClientOpId>
+
+    /**
+     * Файл вложения на устройстве.
+     *
+     * Своё вложение уже лежит локально; чужое скачивается по временной
+     * ссылке и запоминается, чтобы не качать повторно.
+     */
+    suspend fun attachmentFile(id: com.mango.core.model.AttachmentId): Outcome<java.io.File>
 
     suspend fun retry(clientOpId: ClientOpId): Outcome<Unit>
     suspend fun editText(id: MessageId, newText: String): Outcome<Unit>

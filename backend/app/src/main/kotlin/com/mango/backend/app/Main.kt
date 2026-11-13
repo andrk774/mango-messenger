@@ -1,5 +1,11 @@
 package com.mango.backend.app
 
+import com.mango.backend.storage.AttachmentService
+import com.mango.backend.storage.AttachmentsRepository
+import com.mango.backend.storage.FileSystemBlobStorage
+import com.mango.backend.storage.UrlSigner
+import com.mango.backend.storage.attachmentsRoutes
+import java.nio.file.Path
 import com.mango.backend.auth.AuthRepository
 import com.mango.backend.auth.AuthService
 import com.mango.backend.auth.JWT_AUTH
@@ -35,6 +41,9 @@ import com.mango.backend.sync.EventBus
 import com.mango.backend.sync.EventLog
 import com.mango.backend.sync.SyncService
 import com.mango.backend.sync.syncRoutes
+import com.mango.backend.tasks.TaskService
+import com.mango.backend.tasks.TasksRepository
+import com.mango.backend.tasks.tasksRoutes
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
@@ -187,6 +196,25 @@ fun Application.mangoModule(
         time = time,
     )
 
+    val taskService = TaskService(
+        database = database,
+        repository = TasksRepository(),
+        eventLog = eventLog,
+        eventBus = eventBus,
+        ids = ids,
+        time = time,
+    )
+
+    // Вложения: файлы в каталоге за интерфейсом BlobStorage (ADR-0019).
+    val attachmentService = AttachmentService(
+        database = database,
+        repository = AttachmentsRepository(),
+        storage = FileSystemBlobStorage(Path.of(config.storage.directory)),
+        signer = UrlSigner(config.storage.signingKey),
+        time = time,
+        maxFileBytes = config.storage.maxFileBytes,
+    )
+
     val authService = AuthService(
         database = database,
         repository = authRepository,
@@ -274,5 +302,7 @@ fun Application.mangoModule(
         syncRoutes(syncService)
         messagingRoutes(conversationService, messageService)
         realtimeRoutes(hub, tokenService, syncService, wsAuthTimeoutMillis)
+        tasksRoutes(taskService)
+        attachmentsRoutes(attachmentService)
     }
 }

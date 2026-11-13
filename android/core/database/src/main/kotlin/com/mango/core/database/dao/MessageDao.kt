@@ -116,6 +116,7 @@ interface MessageDao {
         WHERE conversation_id = :conversationId
           AND seq > :lastReadSeq
           AND deleted_at IS NULL
+          AND type != 'SYSTEM'
           AND sender_id != :currentUserId
         """,
     )

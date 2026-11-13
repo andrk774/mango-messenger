@@ -64,6 +64,7 @@ abstract class MangoDatabase : RoomDatabase() {
     abstract fun taskDao(): TaskDao
     abstract fun outboxDao(): OutboxDao
     abstract fun notificationDao(): NotificationDao
+    abstract fun attachmentDao(): com.mango.core.database.dao.AttachmentDao
 
     companion object {
         const val VERSION = 1
