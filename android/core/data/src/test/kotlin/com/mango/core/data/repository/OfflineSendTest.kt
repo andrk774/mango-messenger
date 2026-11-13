@@ -260,6 +260,19 @@ class OfflineSendTest {
     }
 
     @Test
+    fun `editing an offline task preserves identity and can clear its deadline`() = runTest {
+        val id = (taskRepository.create(NewTaskDraft(title = "Before", dueAtMillis = 100000L)) as Outcome.Success).value
+        assertTrue(taskRepository.edit(id, "After", "Details", null) is Outcome.Success)
+        val task = taskRepository.observeTask(id).first()!!
+        assertEquals("After", task.title)
+        assertEquals("Details", task.description)
+        assertNull(task.dueAt)
+        assertEquals(SyncStatus.PENDING, task.syncStatus)
+        assertTrue(taskRepository.edit(id, " ", null, null) is Outcome.Failure)
+        assertEquals("After", taskRepository.observeTask(id).first()!!.title)
+    }
+
+    @Test
     fun `creating a task offline keeps source message snapshot`() = runTest {
         // Входящее сообщение, из которого создаётся задача.
         database.messageDao().upsert(

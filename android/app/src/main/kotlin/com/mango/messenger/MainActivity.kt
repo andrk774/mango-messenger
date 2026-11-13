@@ -252,11 +252,7 @@ private fun MangoApp(
                 )
             }
             composable(Routes.TASK_DETAILS) {
-                NotImplementedScreen(
-                    title = "Задача",
-                    stage = "Этап 5 — Tasks MVP",
-                    details = "Карточка задачи: описание, исполнители, подзадачи, " +
-                        "комментарии, история изменений и связь с исходным сообщением.",
+                com.mango.messenger.ui.tasks.TaskDetailsScreen(
                     onNavigateBack = navController::popBackStack,
                 )
             }

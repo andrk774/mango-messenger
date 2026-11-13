@@ -140,6 +140,7 @@ interface TaskRepository {
 
     suspend fun create(draft: NewTaskDraft): Outcome<TaskId>
     suspend fun changeStatus(id: TaskId, status: TaskStatus): Outcome<Unit>
+    suspend fun edit(id: TaskId, title: String, description: String?, dueAtMillis: Long?): Outcome<Unit>
     suspend fun delete(id: TaskId): Outcome<Unit>
 
     /**

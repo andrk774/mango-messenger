@@ -61,6 +61,11 @@ fun TasksScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var newTaskTitle by remember { mutableStateOf<String?>(null) }
+    var view by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("Список") }
+    var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    val visibleTasks = state.tasks.filter {
+        query.isBlank() || it.title.contains(query, ignoreCase = true) || it.description.orEmpty().contains(query, ignoreCase = true)
+    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -99,6 +104,15 @@ fun TasksScreen(
                 includeCompleted = state.includeCompleted,
                 onIncludeCompletedChange = viewModel::onIncludeCompletedChange,
             )
+            com.mango.core.designsystem.component.MangoSearchBar(
+                query = query, onQueryChange = { query = it }, placeholder = "Поиск задач",
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Список", "Kanban", "Календарь").forEach { mode ->
+                    FilterChip(selected = view == mode, onClick = { view = mode }, label = { Text(mode) })
+                }
+            }
 
             when {
                 state.isLoading -> FullScreenLoading()
@@ -115,11 +129,11 @@ fun TasksScreen(
                     onAction = { newTaskTitle = "" },
                 )
 
-                else -> TaskList(
-                    tasks = state.tasks,
-                    onTaskClick = onTaskClick,
-                    onStatusChange = viewModel::onStatusChange,
-                )
+                else -> when (view) {
+                    "Kanban" -> TaskBoard(visibleTasks, onTaskClick, viewModel::onStatusChange)
+                    "Календарь" -> TaskCalendar(visibleTasks, onTaskClick, viewModel::onStatusChange)
+                    else -> TaskList(visibleTasks, onTaskClick, viewModel::onStatusChange)
+                }
             }
         }
     }
@@ -181,7 +195,7 @@ private fun FilterRow(
 }
 
 @Composable
-private fun TaskList(
+internal fun TaskList(
     tasks: List<Task>,
     onTaskClick: (TaskId) -> Unit,
     onStatusChange: (TaskId, TaskStatus) -> Unit,

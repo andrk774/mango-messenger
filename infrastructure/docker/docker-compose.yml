@@ -91,8 +91,12 @@ services:
       MANGO_DB_USER: ${POSTGRES_USER:-mango}
       MANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-mango}
       MANGO_REDIS_URL: redis://redis:6379
-      MANGO_SMTP_HOST: mailpit
-      MANGO_SMTP_PORT: "1025"
+      MANGO_SMTP_HOST: ${MANGO_SMTP_HOST:-mailpit}
+      MANGO_SMTP_PORT: ${MANGO_SMTP_PORT:-1025}
+      MANGO_SMTP_SECURITY: ${MANGO_SMTP_SECURITY:-NONE}
+      MANGO_SMTP_USERNAME: ${MANGO_SMTP_USERNAME:-}
+      MANGO_SMTP_PASSWORD: ${MANGO_SMTP_PASSWORD:-}
+      MANGO_MAIL_FROM: ${MANGO_MAIL_FROM:-noreply@mango.local}
       MANGO_JWT_SECRET: ${MANGO_JWT_SECRET:?нужно задать MANGO_JWT_SECRET в .env}
       MANGO_STORAGE_DIR: /data/attachments
       # Ключ Firebase (см. README, «Push-уведомления»). Нет файла —

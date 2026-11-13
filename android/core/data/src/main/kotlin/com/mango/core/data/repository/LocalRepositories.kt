@@ -494,6 +494,33 @@ class LocalTaskRepository @Inject constructor(
      * времени поля — это даёт серверу разрешить конфликт по полю, не теряя
      * параллельных изменений других полей.
      */
+    override suspend fun edit(id: TaskId, title: String, description: String?, dueAtMillis: Long?): Outcome<Unit> =
+        withContext(dispatchers.io) {
+            if (title.isBlank() || title.trim().length > 256) return@withContext Outcome.Failure(
+                AppError.Validation(mapOf("title" to "Название должно содержать от 1 до 256 символов")),
+            )
+            runCatching {
+                database.withTransaction {
+                    val existing = taskDao.findById(id.value) ?: error("Задача не найдена")
+                    val now = time.nowMillis()
+                    val fields = mutableMapOf<String, String?>()
+                    if (existing.title != title.trim()) fields["title"] = title.trim()
+                    if (existing.description != description?.trim()?.takeIf { it.isNotEmpty() }) fields["description"] = description?.trim()?.takeIf { it.isNotEmpty() }
+                    if (existing.dueAt != dueAtMillis) fields["due_at"] = dueAtMillis?.let { java.time.Instant.ofEpochMilli(it).toString() }
+                    if (fields.isEmpty()) return@withTransaction
+                    val versions = fields.keys.fold(existing.fieldVersionsJson) { json, field -> mergeFieldVersion(json, field, now) }
+                    taskDao.upsert(existing.copy(title = title.trim(), description = description?.trim()?.takeIf { it.isNotEmpty() }, dueAt = dueAtMillis,
+                        updatedAt = now, syncStatus = SyncStatus.PENDING, fieldVersionsJson = versions))
+                    outboxDao.enqueue(outboxOperation(
+                        clientOpId = idGenerator.newId(), opType = OpType.PATCH_TASK, entityType = EntityType.TASK,
+                        entityId = id.value, payloadJson = OutboxJson.encodeToString(PatchTaskPayload(
+                            taskId = id.value, baseVersion = existing.version, changedFields = fields, fieldTimestamps = fields.keys.associateWith { now },
+                        )), nowMillis = now, dependsOnOpId = id.value.takeIf { existing.syncStatus != SyncStatus.SYNCED },
+                    ))
+                }
+            }.fold({ Outcome.Success(Unit) }, { Outcome.Failure(AppError.Storage(it)) })
+        }
+
     override suspend fun changeStatus(id: TaskId, status: TaskStatus): Outcome<Unit> =
         withContext(dispatchers.io) {
             val existing = taskDao.findById(id.value)

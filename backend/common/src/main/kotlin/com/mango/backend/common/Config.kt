@@ -94,6 +94,10 @@ data class AppConfig(
                     port = env("MANGO_SMTP_PORT")?.toIntOrNull() ?: 1026,
                     from = env("MANGO_MAIL_FROM") ?: "noreply@mango.local",
                     enabled = env("MANGO_MAIL_ENABLED")?.toBooleanStrictOrNull() ?: true,
+                    username = env("MANGO_SMTP_USERNAME")?.takeIf { it.isNotBlank() },
+                    password = env("MANGO_SMTP_PASSWORD")?.takeIf { it.isNotBlank() },
+                    security = env("MANGO_SMTP_SECURITY")?.uppercase()?.let(MailSecurity::valueOf)
+                        ?: MailSecurity.NONE,
                 ),
                 push = PushConfig(
                     // Ключ сервисного аккаунта Firebase. Не задан или файла
@@ -161,4 +165,14 @@ data class MailConfig(
     val port: Int,
     val from: String,
     val enabled: Boolean,
-)
+    val username: String? = null,
+    val password: String? = null,
+    val security: MailSecurity = MailSecurity.NONE,
+) {
+    init {
+        require((username == null) == (password == null)) { "SMTP username and password must be configured together" }
+        require(username == null || security != MailSecurity.NONE) { "SMTP authentication requires STARTTLS or TLS" }
+    }
+}
+
+enum class MailSecurity { NONE, STARTTLS, TLS }

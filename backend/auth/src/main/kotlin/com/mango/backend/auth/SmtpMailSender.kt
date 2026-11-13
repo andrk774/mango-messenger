@@ -35,7 +35,11 @@ class SmtpMailSender(
         Properties().apply {
             put("mail.smtp.host", config.host)
             put("mail.smtp.port", config.port.toString())
-            put("mail.smtp.auth", "false")
+            put("mail.smtp.auth", (config.username != null).toString())
+            put("mail.smtp.starttls.enable", (config.security == com.mango.backend.common.MailSecurity.STARTTLS).toString())
+            put("mail.smtp.starttls.required", (config.security == com.mango.backend.common.MailSecurity.STARTTLS).toString())
+            put("mail.smtp.ssl.enable", (config.security == com.mango.backend.common.MailSecurity.TLS).toString())
+            put("mail.smtp.ssl.checkserveridentity", "true")
             // Таймауты обязательны: без них зависший SMTP-сервер удерживает
             // поток бесконечно, и пул потоков исчерпывается.
             put("mail.smtp.connectiontimeout", "5000")
@@ -53,7 +57,11 @@ class SmtpMailSender(
                     this.subject = subject
                     setText(body, Charsets.UTF_8.name())
                 }
-                Transport.send(message)
+                if (config.username != null) {
+                    Transport.send(message, config.username, config.password)
+                } else {
+                    Transport.send(message)
+                }
             }.onSuccess {
                 // В журнал — только факт отправки: тело письма содержит
                 // одноразовый токен.
