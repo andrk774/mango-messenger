@@ -27,6 +27,8 @@ import retrofit2.http.Query
  * на другом устройстве».
  */
 interface TasksApi {
+    @GET("v1/tasks/{id}/events")
+    suspend fun events(@Path("id") id: String): Response<com.mango.core.network.dto.TaskEventsResponseDto>
 
     @GET("v1/tasks")
     suspend fun tasks(

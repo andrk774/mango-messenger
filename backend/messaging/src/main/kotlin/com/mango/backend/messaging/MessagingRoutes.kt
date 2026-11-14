@@ -111,6 +111,14 @@ fun Route.messagingRoutes(
                 )
             }
 
+            get("/{conversationId}/messages/search") {
+                val params = call.request.queryParameters
+                call.respond(messages.search(
+                    callerIdentity().userId, pathUuid("conversationId"), params["q"].orEmpty(),
+                    params["beforeSeq"]?.toLongOrNull(), params["limit"]?.toIntOrNull() ?: 50,
+                ))
+            }
+
             post("/{conversationId}/messages") {
                 val caller = callerIdentity()
                 val body = call.receive<SendMessageRequest>()
@@ -132,6 +140,9 @@ fun Route.messagingRoutes(
         }
 
         route("/v1/messages") {
+            put("/{messageId}/reactions") {
+                call.respond(messages.react(callerIdentity().userId, pathUuid("messageId"), call.receive<ReactionRequest>()))
+            }
 
             patch("/{messageId}") {
                 val caller = callerIdentity()

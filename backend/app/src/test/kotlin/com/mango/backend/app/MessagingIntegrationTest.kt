@@ -48,6 +48,50 @@ class MessagingIntegrationTest : IntegrationTestBase() {
     @BeforeEach
     fun cleanup() = resetDatabase()
 
+    @Test
+    fun `reactions are idempotent private and removable`() = withApp { client ->
+        val anna = client.newUser("anna@example.com", "anna")
+        val boris = client.newUser("boris@example.com", "boris")
+        val stranger = client.newUser("stranger@example.com", "stranger")
+        val chat: ConversationDto = client.createDirect(anna, client.me(boris).id).body()
+        val message: MessageDto = client.send(anna, chat.id, "reaction-1", "Hello").body()
+        suspend fun react(token: TokenPairResponse, add: Boolean) = client.put("/v1/messages/${message.id}/reactions") {
+            bearerAuth(token.accessToken)
+            contentType(ContentType.Application.Json)
+            setBody(com.mango.backend.messaging.ReactionRequest("👍", add))
+        }
+        assertEquals(HttpStatusCode.Forbidden, react(stranger, true).status)
+        react(boris, true)
+        val repeated: MessageDto = react(boris, true).body()
+        assertEquals(1, repeated.reactions.size)
+        assertEquals(client.me(boris).id, repeated.reactions.single().userId)
+        val removed: MessageDto = react(boris, false).body()
+        assertTrue(removed.reactions.isEmpty())
+        client.delete("/v1/messages/${message.id}") { bearerAuth(anna.accessToken) }
+        assertEquals(HttpStatusCode.Conflict, react(boris, true).status)
+    }
+
+    @Test
+    fun `message search is private literal paginated and excludes deleted messages`() = withApp { client ->
+        val anna = client.newUser("anna@example.com", "anna")
+        val boris = client.newUser("boris@example.com", "boris")
+        val stranger = client.newUser("stranger@example.com", "stranger")
+        val chat: ConversationDto = client.createDirect(anna, client.me(boris).id).body()
+        val first: MessageDto = client.send(anna, chat.id, "search-1", "Plan 100% ready").body()
+        val second: MessageDto = client.send(anna, chat.id, "search-2", "PLAN 100% done").body()
+        val path = "/v1/conversations/${chat.id}/messages/search"
+        val found: MessagesResponse = client.get("$path?q=plan&limit=1") { bearerAuth(anna.accessToken) }.body()
+        assertEquals(listOf(second.id), found.items.map { it.id })
+        val older: MessagesResponse = client.get("$path?q=plan&beforeSeq=${second.seq}") { bearerAuth(anna.accessToken) }.body()
+        assertEquals(listOf(first.id), older.items.map { it.id })
+        assertEquals(HttpStatusCode.Forbidden, client.get("$path?q=plan") { bearerAuth(stranger.accessToken) }.status)
+        val literal: MessagesResponse = client.get("$path?q=_%25") { bearerAuth(anna.accessToken) }.body()
+        assertTrue(literal.items.isEmpty())
+        client.delete("/v1/messages/${second.id}") { bearerAuth(anna.accessToken) }
+        val remaining: MessagesResponse = client.get("$path?q=plan") { bearerAuth(anna.accessToken) }.body()
+        assertEquals(listOf(first.id), remaining.items.map { it.id })
+    }
+
     // ──────────────────────────── чаты ────────────────────────────
 
     @Test

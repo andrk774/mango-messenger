@@ -231,7 +231,11 @@ private fun MangoApp(
                 ContactsScreen(modifier = Modifier.padding(padding))
             }
             composable(Routes.NOTIFICATIONS) {
-                NotificationsScreen(modifier = Modifier.padding(padding))
+                NotificationsScreen(
+                    onConversation = { navController.navigate(Routes.conversation(it)) },
+                    onTask = { navController.navigate(Routes.taskDetails(it)) },
+                    modifier = Modifier.padding(padding),
+                )
             }
             composable(Routes.SETTINGS) {
                 SettingsScreen(onSignOut = onSignOut, modifier = Modifier.padding(padding))

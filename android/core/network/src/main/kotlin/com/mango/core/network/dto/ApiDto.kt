@@ -176,6 +176,7 @@ data class MessageReferenceDto(
 
 @Serializable
 data class MessageDto(
+    val reactions: List<ReactionDto> = emptyList(),
     val id: String,
     val conversationId: String,
     val senderId: String,
@@ -229,6 +230,12 @@ data class ConversationsResponseDto(
 
 @Serializable
 data class MessagesResponseDto(val items: List<MessageDto>)
+
+@Serializable
+data class ReactionDto(val userId: String, val emoji: String, val createdAt: Instant)
+
+@Serializable
+data class ReactionRequestDto(val emoji: String, val add: Boolean)
 
 @Serializable
 data class MembersResponseDto(val items: List<MemberDto>)

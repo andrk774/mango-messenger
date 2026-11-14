@@ -83,6 +83,21 @@ class OutboxProcessor @Inject constructor(
      */
     private val runMutex = Mutex()
 
+    suspend fun hasPendingWork(): Boolean = outboxDao.all().any {
+        it.opType in SUPPORTED_OP_TYPES && it.status in listOf(OutboxStatus.PENDING, OutboxStatus.IN_FLIGHT, OutboxStatus.BLOCKED)
+    }
+
+    /** Drain newly unblocked dependencies, with a bound for one worker execution. */
+    suspend fun runUntilIdle(maxBatches: Int = 10): OutboxRunResult {
+        var total = OutboxRunResult(0, 0, 0)
+        repeat(maxBatches) {
+            val batch = runOnce()
+            total = OutboxRunResult(total.processed + batch.processed, total.failed + batch.failed, total.retriesScheduled + batch.retriesScheduled)
+            if (batch.processed == 0 && batch.failed == 0) return total
+        }
+        return total
+    }
+
     suspend fun runOnce(limit: Int = BATCH_SIZE): OutboxRunResult = runMutex.withLock {
         val now = time.nowMillis()
 

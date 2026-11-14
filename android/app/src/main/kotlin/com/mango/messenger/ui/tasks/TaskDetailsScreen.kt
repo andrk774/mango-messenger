@@ -23,16 +23,90 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.Instant
 import javax.inject.Inject
 
+internal fun editedDeadline(date: String, previous: Instant?, zone: ZoneId): Long? {
+    if (date.isBlank()) return null
+    val day = LocalDate.parse(date.trim())
+    // Изменение названия не должно сбрасывать время существующего срока на полночь.
+    return if (previous?.atZone(zone)?.toLocalDate() == day) previous.toEpochMilli()
+    else day.atStartOfDay(zone).toInstant().toEpochMilli()
+}
+
 @HiltViewModel
-class TaskDetailsViewModel @Inject constructor(state: SavedStateHandle, private val repository: TaskRepository) : ViewModel() {
+class TaskDetailsViewModel @Inject constructor(
+    state: SavedStateHandle,
+    private val repository: TaskRepository,
+    private val remote: com.mango.core.network.TasksRemoteDataSource,
+    private val conversations: com.mango.core.data.repository.ConversationRepository,
+    private val sync: com.mango.core.sync.SyncEngine,
+) : ViewModel() {
     private val id = TaskId(checkNotNull(state.get<String>("taskId")))
     val task = repository.observeTask(id).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val feedback = MutableStateFlow<String?>(null)
+    val comments = MutableStateFlow<List<com.mango.core.network.dto.TaskCommentDto>>(emptyList())
+    val history = MutableStateFlow<List<com.mango.core.network.dto.TaskEventDto>>(emptyList())
+    val detailError = MutableStateFlow<String?>(null)
+    val commentBusy = MutableStateFlow(false)
+    val commentText = MutableStateFlow("")
+    val members = MutableStateFlow<List<com.mango.core.model.ConversationMember>>(emptyList())
+    private var pendingComment: Pair<String, String>? = null
+    init {
+        refreshDetails()
+        viewModelScope.launch {
+            task.collectLatest { value ->
+                members.value = emptyList()
+                value?.conversationId?.let { conversationId ->
+                    conversations.observeMembersWithRoles(conversationId).collect { members.value = it }
+                }
+            }
+        }
+    }
+    fun assign(userId: String, add: Boolean) {
+        viewModelScope.launch {
+            when (val result = remote.assignees(id.value, if (add) listOf(userId) else emptyList(), if (add) emptyList() else listOf(userId))) {
+                is Outcome.Success -> { sync.refreshTasks(); refreshDetails() }
+                is Outcome.Failure -> detailError.value = result.error.toUserMessage()
+            }
+        }
+    }
+    fun refreshDetails() {
+        viewModelScope.launch {
+            detailError.value = null
+            when (val result = remote.comments(id.value)) {
+                is Outcome.Success -> comments.value = result.value.items
+                is Outcome.Failure -> detailError.value = result.error.toUserMessage()
+            }
+            when (val result = remote.events(id.value)) {
+                is Outcome.Success -> history.value = result.value.items
+                is Outcome.Failure -> detailError.value = result.error.toUserMessage()
+            }
+        }
+    }
+    fun addComment() {
+        val body = commentText.value.trim()
+        if (body.isBlank() || commentBusy.value) return
+        val pending = pendingComment?.takeIf { it.second == body }
+            ?: (java.util.UUID.randomUUID().toString() to body).also { pendingComment = it }
+        viewModelScope.launch {
+            commentBusy.value = true
+            try {
+                when (val result = remote.addComment(id.value, pending.first, pending.second)) {
+                    is Outcome.Success -> {
+                        comments.value = (comments.value + result.value).distinctBy { it.id }
+                        if (commentText.value.trim() == body) commentText.value = ""
+                        pendingComment = null
+                        refreshDetails()
+                    }
+                    is Outcome.Failure -> detailError.value = result.error.toUserMessage()
+                }
+            } finally { commentBusy.value = false }
+        }
+    }
     fun status(value: TaskStatus) { viewModelScope.launch { report(repository.changeStatus(id, value)) } }
     fun save(title: String, description: String, date: String) {
-        val due = if (date.isBlank()) null else runCatching { LocalDate.parse(date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() }
+        val due = runCatching { editedDeadline(date, task.value?.dueAt, ZoneId.systemDefault()) }
             .getOrElse { feedback.value = "Укажите дату в формате ГГГГ-ММ-ДД"; return }
         viewModelScope.launch { report(repository.edit(id, title, description, due)) }
     }
@@ -45,6 +119,12 @@ class TaskDetailsViewModel @Inject constructor(state: SavedStateHandle, private 
 fun TaskDetailsScreen(onNavigateBack: () -> Unit, viewModel: TaskDetailsViewModel = hiltViewModel()) {
     val task by viewModel.task.collectAsStateWithLifecycle()
     val feedback by viewModel.feedback.collectAsStateWithLifecycle()
+    val comments by viewModel.comments.collectAsStateWithLifecycle()
+    val history by viewModel.history.collectAsStateWithLifecycle()
+    val detailError by viewModel.detailError.collectAsStateWithLifecycle()
+    val commentBusy by viewModel.commentBusy.collectAsStateWithLifecycle()
+    val commentText by viewModel.commentText.collectAsStateWithLifecycle()
+    val members by viewModel.members.collectAsStateWithLifecycle()
     Scaffold(topBar = { MangoTopAppBar(title = "Задача", onNavigateBack = onNavigateBack) }) { padding ->
         val value = task
         if (value == null) { Text("Задача недоступна", Modifier.padding(padding).padding(16.dp)); return@Scaffold }
@@ -63,6 +143,23 @@ fun TaskDetailsScreen(onNavigateBack: () -> Unit, viewModel: TaskDetailsViewMode
             }
             value.source?.let { Text("Из сообщения: ${it.textSnapshot.orEmpty()}") }
             if (value.assignees.isNotEmpty()) Text("Исполнители: ${value.assignees.joinToString { it.displayName }}")
+            members.forEach { member ->
+                val assigned = value.assignees.any { it.id == member.user.id }
+                FilterChip(selected = assigned, onClick = { viewModel.assign(member.user.id.value, !assigned) }, label = { Text(member.user.displayName) })
+            }
+            HorizontalDivider()
+            Text("Комментарии", style = MaterialTheme.typography.titleMedium)
+            detailError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            TextButton(onClick = viewModel::refreshDetails) { Text("Обновить комментарии и историю") }
+            comments.forEach { comment ->
+                Text("${comment.authorName}: ${comment.body}")
+            }
+            OutlinedTextField(commentText, { viewModel.commentText.value = it }, label = { Text("Комментарий") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = viewModel::addComment, enabled = !commentBusy && commentText.isNotBlank()) { Text("Отправить комментарий") }
+            Text("История", style = MaterialTheme.typography.titleMedium)
+            history.forEach { event ->
+                Text("${event.createdAt} · ${event.actorName.orEmpty()} · ${event.type}${event.field?.let { ": $it" }.orEmpty()}")
+            }
         }
     }
 }

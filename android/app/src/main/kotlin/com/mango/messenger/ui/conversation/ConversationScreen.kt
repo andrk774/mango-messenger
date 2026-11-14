@@ -96,6 +96,8 @@ fun ConversationScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    var showSearch by remember { mutableStateOf(false) }
+    if (showSearch) MessageSearchDialog(viewModel, onDismiss = { showSearch = false })
 
     // Системный выбор файла: приложению не нужно разрешение на чтение
     // всего хранилища — доступ даётся только к выбранному файлу.
@@ -152,6 +154,7 @@ fun ConversationScreen(
                 onNavigateBack = onNavigateBack,
                 onTitleClick = if (state.isGroup) ({ onOpenInfo(state.conversationId) }) else null,
                 actions = {
+                    androidx.compose.material3.TextButton(onClick = { showSearch = true }) { Text("Поиск") }
                     if (state.isGroup) {
                         IconButton(onClick = { onOpenInfo(state.conversationId) }) {
                             Icon(Icons.Outlined.Info, contentDescription = "О группе")
@@ -182,12 +185,14 @@ fun ConversationScreen(
                     senderNames = if (state.isGroup) state.memberNames else emptyMap(),
                     listState = listState,
                     onRetry = viewModel::retry,
+                    onReaction = viewModel::react,
                     onOpenAttachment = viewModel::openAttachment,
                     loadImage = viewModel::imageFile,
                     modifier = Modifier.weight(1f),
                 )
             }
 
+            VoiceComposer(onSend = viewModel::sendVoice)
             Composer(
                 text = state.composerText,
                 canSend = state.canSend,
@@ -236,6 +241,7 @@ private fun MessageList(
     senderNames: Map<UserId, String>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     onRetry: (Message) -> Unit,
+    onReaction: (Message, String) -> Unit,
     onOpenAttachment: (Attachment) -> Unit,
     loadImage: suspend (Attachment) -> File?,
     modifier: Modifier = Modifier,
@@ -284,6 +290,9 @@ private fun MessageList(
                 // Пузырь — для текста или подписи. Сообщение-картинка без
                 // подписи обходится без пустого пузыря, но время и статус
                 // доставки всё равно нужны — они показываются пузырём.
+                if (message.type == MessageType.VOICE) {
+                    message.attachments.forEach { attachment -> VoicePlayback(attachment.id.value, load = { loadImage(attachment) }) }
+                }
                 MessageBubble(
                     text = message.text,
                     isOutgoing = isOutgoing,
@@ -304,6 +313,13 @@ private fun MessageList(
                         text = "Отправить снова",
                         onClick = { onRetry(message) },
                     )
+                }
+                if (!message.isDeleted && message.syncStatus == SyncStatus.SYNCED) {
+                    Row {
+                        listOf("👍", "❤️", "😂").forEach { emoji ->
+                            androidx.compose.material3.TextButton(onClick = { onReaction(message, emoji) }) { Text(emoji) }
+                        }
+                    }
                 }
             }
         }

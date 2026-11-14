@@ -78,6 +78,8 @@ interface UserDao {
 
 @Dao
 interface NotificationDao {
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(notification: NotificationEntity)
 
     @Upsert
     suspend fun upsert(notification: NotificationEntity)

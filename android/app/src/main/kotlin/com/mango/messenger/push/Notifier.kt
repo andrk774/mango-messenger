@@ -92,6 +92,13 @@ class Notifier @Inject constructor(
         val settings = settingsStore.settings.first()
         if (!settings.taskNotificationsEnabled || !canPost()) return@withContext
         val task = database.taskDao().findById(taskId) ?: return@withContext
+        database.userDao().currentUserId()?.let { me ->
+            database.notificationDao().insertIfAbsent(com.mango.core.database.entity.NotificationEntity(
+                id = "reminder:$taskId:${task.remindAt}", userId = me, type = com.mango.core.model.NotificationType.TASK_REMINDER,
+                title = "Напоминание", body = task.title, conversationId = null, messageId = null, taskId = taskId,
+                readAt = null, createdAt = System.currentTimeMillis(),
+            ))
+        }
         post(
             id = taskId.hashCode(),
             channel = CHANNEL_REMINDERS,

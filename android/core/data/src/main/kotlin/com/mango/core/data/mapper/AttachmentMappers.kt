@@ -89,6 +89,15 @@ fun AttachmentDto.toEntity(messageId: String, existing: AttachmentEntity?, nowMi
  * Вызывается внутри транзакции записи сообщения.
  */
 suspend fun MangoDatabase.storeServerAttachments(message: MessageDto, nowMillis: Long) {
+    messageDao().clearSyncedReactions(message.id)
+    val pendingReactions = messageDao().reactionsFor(listOf(message.id)).filter { it.syncStatus != com.mango.core.model.SyncStatus.SYNCED }
+        .map { it.userId to it.emoji }.toSet()
+    message.reactions.filter { (it.userId to it.emoji) !in pendingReactions }.forEach {
+        messageDao().upsertReaction(com.mango.core.database.entity.MessageReactionEntity(
+            messageId = message.id, userId = it.userId, emoji = it.emoji,
+            syncStatus = com.mango.core.model.SyncStatus.SYNCED, createdAt = it.createdAt.toEpochMilli(),
+        ))
+    }
     val dao = attachmentDao()
     // Собственное сообщение до подтверждения жило под локальным id
     // (= clientMsgId); вложения переезжают вместе с ним.

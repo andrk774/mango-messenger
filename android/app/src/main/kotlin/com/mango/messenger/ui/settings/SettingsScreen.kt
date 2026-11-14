@@ -187,7 +187,7 @@ private fun ProfileRow(user: User?) {
         supportingContent = {
             Text(
                 text = user?.username?.let { "@$it" }
-                    ?: "Регистрация и вход подключаются на Этапе 4",
+                    ?: "Профиль загружается",
                 style = MaterialTheme.typography.bodySmall,
             )
         },

@@ -66,6 +66,7 @@ class NotifierTest {
         every { settings.settings } returns flowOf(UserSettings())
         coEvery { database.taskDao().findById("task") } returns mockk {
             every { title } returns "Test reminder"
+            every { remindAt } returns null
         }
         notifier.createChannels()
         notifier.showReminder("task")
@@ -80,6 +81,7 @@ class NotifierTest {
         every { settings.settings } returns flowOf(UserSettings())
         coEvery { database.taskDao().findById("task") } returns mockk {
             every { title } returns "Test reminder"
+            every { remindAt } returns null
         }
         notifier.createChannels()
         notifier.showReminder("task")

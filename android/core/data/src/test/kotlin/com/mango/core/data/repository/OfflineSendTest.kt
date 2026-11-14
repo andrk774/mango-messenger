@@ -468,6 +468,8 @@ class OfflineSendTest {
     private fun offlineRemote(): MessagingRemoteDataSource =
         MessagingRemoteDataSource(
             object : MessagingApi {
+                override suspend fun react(id: String, request: com.mango.core.network.dto.ReactionRequestDto): Nothing = error("Offline test must not call reaction endpoint")
+                override suspend fun searchMessages(id: String, query: String, beforeSeq: Long?): Nothing = error("Offline test must not call search")
                 private fun fail(): Nothing = throw java.io.IOException("нет сети")
 
                 override suspend fun conversations(limit: Int) = fail()

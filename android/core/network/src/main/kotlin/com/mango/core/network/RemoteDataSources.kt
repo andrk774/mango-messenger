@@ -88,6 +88,9 @@ class AuthRemoteDataSource @Inject constructor(private val api: AuthApi) {
 
 @Singleton
 class MessagingRemoteDataSource @Inject constructor(private val api: MessagingApi) {
+    suspend fun react(id: String, emoji: String, add: Boolean) = apiCall { api.react(id, com.mango.core.network.dto.ReactionRequestDto(emoji, add)) }
+    suspend fun searchMessages(id: String, query: String, beforeSeq: Long? = null) =
+        apiCall { api.searchMessages(id, query, beforeSeq) }
 
     suspend fun conversations(limit: Int = 50): Outcome<ConversationsResponseDto> =
         apiCall { api.conversations(limit) }

@@ -665,11 +665,11 @@ paths:
 
   /v1/messages/{messageId}/reactions:
     put:
+      x-implemented: true
       tags: [messages]
-      summary: Переключение реакции
+      summary: Идемпотентное добавление или снятие своей реакции
       parameters:
         - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -678,10 +678,37 @@ paths:
               type: object
               required: [emoji, add]
               properties:
-                emoji: { type: string, maxLength: 8 }
+                emoji: { type: string, enum: ['👍', '❤️', '😂', '😮', '😢', '🙏'] }
                 add: { type: boolean }
       responses:
-        '200': { description: Реакция применена }
+        '200':
+          description: Сообщение с актуальным списком реакций
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+
+  /v1/conversations/{conversationId}/messages/search:
+    get:
+      x-implemented: true
+      tags: [messages]
+      summary: Поиск текста в доступной переписке без удалённых сообщений
+      parameters:
+        - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 200 } }
+        - { name: beforeSeq, in: query, schema: { type: integer, format: int64 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        '200':
+          description: Совпадения по убыванию seq, поиск буквального текста без шаблонов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Message' }
+        '403': { description: Нет доступа к переписке }
 
   /v1/messages/{messageId}/to-task:
     post:
@@ -1386,8 +1413,8 @@ components:
             type: object
             properties:
               emoji: { type: string }
-              count: { type: integer }
-              reactedByMe: { type: boolean }
+              userId: { type: string, format: uuid }
+              createdAt: { type: string, format: date-time }
         editedAt: { type: string, format: date-time, nullable: true }
         deletedAt: { type: string, format: date-time, nullable: true }
         pinnedAt: { type: string, format: date-time, nullable: true }

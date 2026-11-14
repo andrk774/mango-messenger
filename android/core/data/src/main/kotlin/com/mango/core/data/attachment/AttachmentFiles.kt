@@ -86,7 +86,7 @@ class AttachmentFileStore @Inject constructor(
             }
         } ?: (null to null)
 
-        val mimeType = (resolver.getType(uri) ?: guessMime(displayName))?.lowercase()
+        val mimeType = normalizeAttachmentMime(displayName, resolver.getType(uri) ?: guessMime(displayName))
             ?: throw AttachmentRejected("Не удалось определить тип файла")
         if (mimeType !in ClientAttachmentPolicy.allowedTypes) {
             throw AttachmentRejected("Такой тип файла отправить нельзя")
@@ -153,4 +153,12 @@ class AttachmentFileStore @Inject constructor(
     private fun guessMime(name: String?): String? =
         name?.substringAfterLast('.', "")?.lowercase()?.takeIf { it.isNotEmpty() }
             ?.let { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it) }
+}
+
+internal fun normalizeAttachmentMime(name: String?, declared: String?): String? {
+    val type = declared?.lowercase()
+    // Some Android providers report MPEG-4 audio (.m4a) as MPEG audio (.mp3).
+    // The server still validates the actual file signature.
+    return if (name?.endsWith(".m4a", ignoreCase = true) == true &&
+        type in listOf(null, "audio/mpeg", "audio/x-m4a", "audio/mp4")) "audio/mp4" else type
 }

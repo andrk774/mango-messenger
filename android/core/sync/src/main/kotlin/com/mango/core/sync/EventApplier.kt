@@ -214,6 +214,14 @@ class EventApplier @Inject constructor(
         )
         messageDao.upsert(dto.toEntity())
         database.storeServerAttachments(dto, System.currentTimeMillis())
+        val me = database.userDao().currentUserId()
+        if (me != null && me != dto.senderId && dto.deletedAt == null && dto.type != "SYSTEM") {
+            database.notificationDao().insertIfAbsent(com.mango.core.database.entity.NotificationEntity(
+                id = "message:${dto.id}", userId = me, type = com.mango.core.model.NotificationType.NEW_MESSAGE,
+                title = dto.senderName, body = dto.body ?: "Вложение", conversationId = dto.conversationId,
+                messageId = dto.id, taskId = null, readAt = null, createdAt = dto.createdAt.toEpochMilli(),
+            ))
+        }
 
         conversationDao.advanceLastEventSeq(dto.conversationId, dto.seq)
     }

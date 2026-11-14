@@ -104,6 +104,7 @@ data class SystemEventDto(
 
 @Serializable
 data class MessageDto(
+    val reactions: List<ReactionDto> = emptyList(),
     val id: UUID,
     val conversationId: UUID,
     val senderId: UUID,
@@ -122,6 +123,12 @@ data class MessageDto(
     /** Только для `type = SYSTEM`; `body` у таких сообщений пуст. */
     val system: SystemEventDto? = null,
 )
+
+@Serializable
+data class ReactionDto(val userId: UUID, val emoji: String, val createdAt: Instant)
+
+@Serializable
+data class ReactionRequest(val emoji: String, val add: Boolean)
 
 @Serializable
 data class ConversationDto(

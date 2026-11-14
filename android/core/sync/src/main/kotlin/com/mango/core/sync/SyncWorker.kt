@@ -37,7 +37,7 @@ class SyncWorker @AssistedInject constructor(
             // Сначала отправка: изменения пользователя важнее догрузки
             // чужих. Кроме того, отправленное сразу вернётся событием,
             // и догонка его уже учтёт.
-            val outbox = outboxProcessor.runOnce()
+            val outbox = outboxProcessor.runUntilIdle()
 
             val catchUp = syncEngine.catchUp()
             if (catchUp is Outcome.Failure) {
@@ -52,7 +52,7 @@ class SyncWorker @AssistedInject constructor(
                 "фоновая синхронизация: отправлено ${outbox.processed}, " +
                     "получено ${(catchUp as Outcome.Success).value.appliedEvents}",
             )
-            Result.success()
+            if (outboxProcessor.hasPendingWork()) Result.retry() else Result.success()
         }.getOrElse { error ->
             logger.e(TAG, "фоновая синхронизация прервана", error)
             Result.retry()
@@ -62,6 +62,19 @@ class SyncWorker @AssistedInject constructor(
     companion object {
         const val TAG = "SyncWorker"
         private const val UNIQUE_WORK = "mango-sync"
+
+        /** Queue changes must survive the race with an already finishing worker. */
+        fun enqueueAfterCurrent(workManager: WorkManager) {
+            workManager.enqueueUniqueWork(
+                UNIQUE_WORK,
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                OneTimeWorkRequestBuilder<SyncWorker>()
+                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                    .addTag(TAG)
+                    .build(),
+            )
+        }
 
         /**
          * Ставит синхронизацию в очередь задач системы.

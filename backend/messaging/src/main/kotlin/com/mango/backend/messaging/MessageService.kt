@@ -168,6 +168,16 @@ class MessageService(
         )
     }
 
+    suspend fun search(userId: UUID, conversationId: UUID, query: String, beforeSeq: Long?, limit: Int): MessagesResponse {
+        val text = query.trim()
+        validate { requireLength(text, "q", min = 2, max = 200) }
+        return database.readOnly { connection ->
+            repository.membership(connection, conversationId, userId)
+                ?: throw AppException.Forbidden("Чат недоступен")
+            MessagesResponse(repository.searchMessages(connection, conversationId, text, beforeSeq, limit.coerceIn(1, MAX_PAGE_SIZE)))
+        }
+    }
+
     suspend fun edit(userId: UUID, messageId: UUID, newBody: String): MessageDto {
         val body = newBody.trim()
         validate {
@@ -214,6 +224,25 @@ class MessageService(
             updated to stored
         }
 
+        publish(events)
+        return message
+    }
+
+    suspend fun react(userId: UUID, messageId: UUID, request: ReactionRequest): MessageDto {
+        validate { check(request.emoji in setOf("👍", "❤️", "😂", "😮", "😢", "🙏"), "emoji", "Недопустимая реакция") }
+        val (message, events) = database.transaction { connection ->
+            val existing = repository.messageById(connection, messageId) ?: throw AppException.NotFound("Сообщение")
+            repository.membership(connection, existing.conversationId, userId) ?: throw AppException.Forbidden("Чат недоступен")
+            repository.lockConversation(connection, existing.conversationId)
+            val current = repository.messageById(connection, messageId) ?: throw AppException.NotFound("Сообщение")
+            if (current.deletedAt != null) throw AppException.Conflict("Сообщение удалено")
+            repository.setReaction(connection, messageId, userId, request.emoji, request.add, time.now())
+            val updated = repository.messageById(connection, messageId)!!
+            updated to eventLog.append(connection, listOf(OutgoingEvent(
+                scope = EventScope.CONVERSATION, scopeId = current.conversationId, type = EventTypes.MESSAGE_EDITED,
+                payloadJson = ApiJson.encodeToString(MessageEditedPayload(updated)), recipients = repository.memberIds(connection, current.conversationId),
+            )))
+        }
         publish(events)
         return message
     }

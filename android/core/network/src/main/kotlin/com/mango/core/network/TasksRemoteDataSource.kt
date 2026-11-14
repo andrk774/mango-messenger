@@ -24,6 +24,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class TasksRemoteDataSource @Inject constructor(private val api: TasksApi) {
+    suspend fun comments(taskId: String) = apiCall { api.comments(taskId) }
+    suspend fun events(taskId: String) = apiCall { api.events(taskId) }
 
     suspend fun tasks(scope: String, includeCompleted: Boolean = true): Outcome<TasksResponseDto> =
         apiCall { api.tasks(scope = scope, includeCompleted = includeCompleted) }

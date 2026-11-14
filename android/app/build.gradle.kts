@@ -90,6 +90,16 @@ android {
         sourceSets.getByName("main").res.srcDir(lanResDir)
     }
 
+    val releaseStore = System.getenv("MANGO_KEYSTORE_PATH")
+    if (!releaseStore.isNullOrBlank()) {
+        signingConfigs.create("mangoRelease") {
+            storeFile = file(releaseStore)
+            storePassword = System.getenv("MANGO_KEYSTORE_PASSWORD") ?: error("MANGO_KEYSTORE_PASSWORD is required")
+            keyAlias = System.getenv("MANGO_KEY_ALIAS") ?: "mango-release"
+            keyPassword = System.getenv("MANGO_KEY_PASSWORD") ?: storePassword
+        }
+    }
+
     buildTypes {
         debug {
             manifestPlaceholders["networkSecurityConfig"] =
@@ -104,9 +114,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Релизная сборка пока подписывается debug-ключом, чтобы assembleRelease
-            // был проверяем в CI. Реальный keystore подключается на Этапе 7.
-            signingConfig = signingConfigs.getByName("debug")
+            // Release signing is supplied by scripts/build-release.ps1 or the environment.
+            signingConfig = signingConfigs.findByName("mangoRelease")
         }
     }
 }

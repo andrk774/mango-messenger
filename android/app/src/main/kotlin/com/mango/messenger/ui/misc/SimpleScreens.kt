@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.clickable
 
 data class ContactsUiState(
     val query: String = "",
@@ -90,7 +92,7 @@ fun ContactsScreen(
                     icon = Icons.Outlined.People,
                     title = if (state.query.isBlank()) "Список контактов пуст" else "Никого не найдено",
                     description = if (state.query.isBlank()) {
-                        "Контакты появятся после подключения серверной части и поиска пользователей."
+                        "Начните переписку через кнопку нового чата — собеседники появятся здесь."
                     } else {
                         null
                     },
@@ -113,26 +115,46 @@ fun ContactsScreen(
     }
 }
 
-/**
- * Экран уведомлений.
- *
- * Лента заполняется на Этапе 6 вместе с push-доставкой. Экран присутствует
- * в навигации уже сейчас, но честно сообщает о своём состоянии, а не
- * показывает выдуманные данные.
- */
+@HiltViewModel
+class NotificationsViewModel @Inject constructor(private val database: com.mango.core.database.MangoDatabase) : ViewModel() {
+    val items = database.notificationDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    fun read(id: String) { viewModelScope.launch { database.notificationDao().markRead(listOf(id), System.currentTimeMillis()) } }
+    fun readAll() { viewModelScope.launch { database.notificationDao().markAllRead(System.currentTimeMillis()) } }
+}
+
 @Composable
-fun NotificationsScreen(modifier: Modifier = Modifier) {
+fun NotificationsScreen(
+    onConversation: (String) -> Unit,
+    onTask: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: NotificationsViewModel = hiltViewModel(),
+) {
+    val items by viewModel.items.collectAsStateWithLifecycle()
     Scaffold(
         modifier = modifier,
-        topBar = { MangoTopAppBar(title = "Уведомления") },
+        topBar = { MangoTopAppBar(title = "Уведомления", actions = {
+            androidx.compose.material3.TextButton(onClick = viewModel::readAll) { androidx.compose.material3.Text("Прочитать все") }
+        }) },
     ) { padding ->
         Column(Modifier.padding(padding)) {
-            EmptyState(
+            if (items.isEmpty()) EmptyState(
                 icon = Icons.Outlined.Notifications,
                 title = "Уведомлений нет",
-                description = "Здесь появятся упоминания, назначенные задачи, " +
-                    "напоминания и события чатов. Доставка push включается на Этапе 6.",
+                description = "Здесь сохраняются полученные сообщения и напоминания.",
             )
+            else LazyColumn {
+                items(items, key = { it.id }) { entry ->
+                    androidx.compose.material3.ListItem(
+                        headlineContent = { androidx.compose.material3.Text((if (entry.readAt == null) "● " else "") + entry.title) },
+                        supportingContent = { androidx.compose.material3.Text(entry.body.orEmpty()) },
+                        modifier = Modifier.clickable {
+                            viewModel.read(entry.id)
+                            entry.conversationId?.let(onConversation) ?: entry.taskId?.let(onTask)
+                        },
+                    )
+                    HorizontalDivider()
+                }
+            }
         }
     }
 }

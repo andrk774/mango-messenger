@@ -115,6 +115,21 @@ data class TaskCommentDto(
 @Serializable
 data class CommentsResponseDto(val items: List<TaskCommentDto>)
 
+@Serializable
+data class TaskEventDto(
+    val id: Long,
+    val taskId: String,
+    val actorName: String? = null,
+    val type: String,
+    val field: String? = null,
+    val oldValue: kotlinx.serialization.json.JsonElement? = null,
+    val newValue: kotlinx.serialization.json.JsonElement? = null,
+    val createdAt: Instant,
+)
+
+@Serializable
+data class TaskEventsResponseDto(val items: List<TaskEventDto>)
+
 // Полезная нагрузка событий журнала.
 
 @Serializable

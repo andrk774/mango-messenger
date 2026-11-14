@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -31,6 +33,7 @@ class MainViewModel @Inject constructor(
     private val realtimeClient: RealtimeClient,
     private val workManager: WorkManager,
     private val pushRegistrar: com.mango.messenger.push.PushRegistrar,
+    private val syncStatusRepository: com.mango.core.data.repository.SyncStatusRepository,
 ) : ViewModel() {
 
     private val sessionRestored = MutableStateFlow(false)
@@ -54,6 +57,16 @@ class MainViewModel @Inject constructor(
     )
 
     init {
+        viewModelScope.launch {
+            combine(
+                authRepository.isAuthenticated,
+                syncStatusRepository.observeSnapshot().map { it.pendingOperations }.distinctUntilChanged(),
+            ) { authenticated, pending -> authenticated to pending }
+                .distinctUntilChanged()
+                .collect { (authenticated, pending) ->
+                    if (authenticated && pending > 0) SyncWorker.enqueueAfterCurrent(workManager)
+                }
+        }
         viewModelScope.launch {
             authRepository.restoreSession()
             sessionRestored.value = true

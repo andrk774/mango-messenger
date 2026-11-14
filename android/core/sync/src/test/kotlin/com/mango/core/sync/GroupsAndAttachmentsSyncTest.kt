@@ -127,9 +127,9 @@ class GroupsAndAttachmentsSyncTest {
         respond(204, "")
         respond(201, serverMessage(clientMsgId = "msg-local", id = "msg-server"))
 
-        // Первый проход — загрузка; сообщение ждёт её и уходит следующим проходом.
-        processor.runOnce()
-        processor.runOnce()
+        // A single worker execution must drain the upload and its dependent message.
+        processor.runUntilIdle()
+        assertEquals(false, processor.hasPendingWork())
 
         val ticket = server.takeRequest()
         assertEquals("/v1/attachments/upload-ticket", ticket.url.encodedPath)

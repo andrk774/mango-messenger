@@ -58,6 +58,8 @@ sealed interface ConversationEvent {
 
 @HiltViewModel
 class ConversationViewModel @Inject constructor(
+    private val messagingRemote: com.mango.core.network.MessagingRemoteDataSource,
+    private val eventApplier: com.mango.core.sync.EventApplier,
     savedStateHandle: SavedStateHandle,
     private val messageRepository: MessageRepository,
     private val conversationRepository: ConversationRepository,
@@ -70,6 +72,43 @@ class ConversationViewModel @Inject constructor(
     )
 
     private val composerText = MutableStateFlow("")
+    private val reacting = mutableSetOf<String>()
+    fun react(message: Message, emoji: String) {
+        val key = "${message.id.value}:$emoji"
+        if (!reacting.add(key)) return
+        viewModelScope.launch {
+            try {
+                val add = message.reactions.none { it.emoji == emoji && it.reactedByMe }
+                when (val result = messagingRemote.react(message.id.value, emoji, add)) {
+                    is Outcome.Success -> eventApplier.applyServerMessage(result.value)
+                    is Outcome.Failure -> _events.emit(ConversationEvent.Message(result.error.toUserMessage()))
+                }
+            } finally { reacting.remove(key) }
+        }
+    }
+    val searchResults = MutableStateFlow<List<com.mango.core.network.dto.MessageDto>>(emptyList())
+    val searchBusy = MutableStateFlow(false)
+    val searchError = MutableStateFlow<String?>(null)
+    private var searchJob: kotlinx.coroutines.Job? = null
+    private var searchQuery = ""
+    fun searchMessages(query: String, more: Boolean = false) {
+        val normalizedQuery = query.trim()
+        val append = more && normalizedQuery == searchQuery
+        searchQuery = normalizedQuery
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            searchError.value = null
+            if (!append) searchResults.value = emptyList()
+            if (query.trim().length < 2) { searchBusy.value = false; return@launch }
+            searchBusy.value = true
+            try {
+                when (val result = messagingRemote.searchMessages(conversationId.value, normalizedQuery, if (append) searchResults.value.lastOrNull()?.seq else null)) {
+                    is Outcome.Success -> searchResults.value = ((if (append) searchResults.value else emptyList()) + result.value.items).distinctBy { it.id }
+                    is Outcome.Failure -> searchError.value = result.error.toUserMessage()
+                }
+            } finally { searchBusy.value = false }
+        }
+    }
     private val isLoadingHistory = MutableStateFlow(false)
 
     private val _events = MutableSharedFlow<ConversationEvent>(
@@ -162,6 +201,11 @@ class ConversationViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    suspend fun sendVoice(uri: android.net.Uri): Boolean = when (val result = messageRepository.sendAttachment(conversationId, uri, null)) {
+        is Outcome.Success -> true
+        is Outcome.Failure -> { _events.emit(ConversationEvent.Message(result.error.toUserMessage())); false }
     }
 
     /** Файл картинки для превью: свой — сразу, чужой — после скачивания. */

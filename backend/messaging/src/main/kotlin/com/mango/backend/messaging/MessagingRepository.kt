@@ -327,11 +327,22 @@ class MessagingRepository {
         val ids = messages
             .filter { it.deletedAt == null && it.type != "TEXT" && it.type != "SYSTEM" }
             .map { it.id }
-        if (ids.isEmpty()) return messages
+        if (messages.isEmpty()) return messages
         val byMessage = attachmentsOf(connection, ids)
+        val messageIds = messages.filter { it.deletedAt == null }.map { it.id }
+        val reactions = if (messageIds.isEmpty()) emptyMap() else connection.query(
+            "SELECT message_id, user_id, emoji, created_at FROM message_reactions WHERE message_id IN (${messageIds.joinToString { "?" }}) ORDER BY created_at, user_id, emoji",
+            *messageIds.toTypedArray(),
+        ) { rs -> rs.uuid("message_id") to ReactionDto(rs.uuid("user_id"), rs.getString("emoji"), rs.getTimestamp("created_at").toInstant()) }
+            .groupBy({ it.first }, { it.second })
         return messages.map { message ->
-            byMessage[message.id]?.let { message.copy(attachments = it) } ?: message
+            message.copy(attachments = byMessage[message.id].orEmpty(), reactions = reactions[message.id].orEmpty())
         }
+    }
+
+    fun setReaction(connection: Connection, messageId: UUID, userId: UUID, emoji: String, add: Boolean, now: Instant) {
+        if (add) connection.update("INSERT INTO message_reactions(message_id,user_id,emoji,created_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING", messageId,userId,emoji,now)
+        else connection.update("DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?",messageId,userId,emoji)
     }
 
     // ───────────────────────── сообщения ─────────────────────────
@@ -420,6 +431,14 @@ class MessagingRepository {
         limit: Int,
     ): List<MessageDto> =
         withAttachments(connection, historyPage(connection, conversationId, beforeSeq, afterSeq, limit))
+
+    fun searchMessages(connection: Connection, conversationId: UUID, query: String, beforeSeq: Long?, limit: Int): List<MessageDto> =
+        withAttachments(connection, connection.query(
+            "$MESSAGE_SELECT WHERE m.conversation_id = ? AND m.deleted_at IS NULL " +
+                "AND strpos(lower(COALESCE(m.body, '')), lower(?)) > 0 " +
+                "AND m.seq < ? ORDER BY m.seq DESC LIMIT ?",
+            conversationId, query, beforeSeq ?: Long.MAX_VALUE, limit,
+        ) { mapMessage(it) })
 
     private fun historyPage(
         connection: Connection,

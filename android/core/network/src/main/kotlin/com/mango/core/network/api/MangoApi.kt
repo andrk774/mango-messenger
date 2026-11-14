@@ -82,6 +82,15 @@ interface AuthApi {
 }
 
 interface MessagingApi {
+    @PUT("v1/messages/{id}/reactions")
+    suspend fun react(@Path("id") id: String, @Body request: com.mango.core.network.dto.ReactionRequestDto): Response<MessageDto>
+
+    @GET("v1/conversations/{id}/messages/search")
+    suspend fun searchMessages(
+        @Path("id") id: String,
+        @Query("q") query: String,
+        @Query("beforeSeq") beforeSeq: Long? = null,
+    ): Response<MessagesResponseDto>
 
     @GET("v1/conversations")
     suspend fun conversations(

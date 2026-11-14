@@ -75,6 +75,18 @@ class EventApplierTest {
     fun tearDown() = database.close()
 
     @Test
+    fun `notification stays read after repeated message delivery`() = runTest {
+        applier.applyBatch(listOf(messageCreated(eventId = 5, messageId = "notice-1", seq = 1)))
+        val first = database.notificationDao().observeAll().first()
+        assertEquals(1, first.size)
+        database.notificationDao().markRead(listOf(first.single().id), 1234L)
+        applier.applyBatch(listOf(messageCreated(eventId = 6, messageId = "notice-1", seq = 1)))
+        val repeated = database.notificationDao().observeAll().first()
+        assertEquals(1, repeated.size)
+        assertEquals(1234L, repeated.single().readAt)
+    }
+
+    @Test
     fun `входящее сообщение записывается и продвигает курсор`() = runTest {
         applier.applyBatch(listOf(messageCreated(eventId = 5, messageId = "m1", seq = 1)))
 
