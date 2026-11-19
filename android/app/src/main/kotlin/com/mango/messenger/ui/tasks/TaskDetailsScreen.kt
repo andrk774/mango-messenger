@@ -51,24 +51,38 @@ class TaskDetailsViewModel @Inject constructor(
     val commentBusy = MutableStateFlow(false)
     val commentText = MutableStateFlow("")
     val members = MutableStateFlow<List<com.mango.core.model.ConversationMember>>(emptyList())
+    val assignmentBusy = MutableStateFlow(false)
     private var pendingComment: Pair<String, String>? = null
     init {
         refreshDetails()
         viewModelScope.launch {
-            task.collectLatest { value ->
+            task.map { it?.conversationId }.distinctUntilChanged().collectLatest { conversationId ->
                 members.value = emptyList()
-                value?.conversationId?.let { conversationId ->
+                conversationId?.let {
+                    when (val result = conversations.loadMembers(conversationId)) {
+                        is Outcome.Failure -> detailError.value = result.error.toUserMessage()
+                        is Outcome.Success -> Unit
+                    }
                     conversations.observeMembersWithRoles(conversationId).collect { members.value = it }
                 }
             }
         }
     }
     fun assign(userId: String, add: Boolean) {
+        if (assignmentBusy.value) return
+        assignmentBusy.value = true
         viewModelScope.launch {
+            detailError.value = null
+            try {
             when (val result = remote.assignees(id.value, if (add) listOf(userId) else emptyList(), if (add) emptyList() else listOf(userId))) {
-                is Outcome.Success -> { sync.refreshTasks(); refreshDetails() }
-                is Outcome.Failure -> detailError.value = result.error.toUserMessage()
+                is Outcome.Success -> {
+                    feedback.value = if (add) "Исполнитель назначен. Задача доступна ему в разделе «Мои»." else "Назначение снято"
+                    sync.refreshTasks()
+                    refreshDetails()
+                }
+                is Outcome.Failure -> detailError.value = result.error.toOnlineOnlyMessage()
             }
+            } finally { assignmentBusy.value = false }
         }
     }
     fun refreshDetails() {
@@ -105,10 +119,12 @@ class TaskDetailsViewModel @Inject constructor(
         }
     }
     fun status(value: TaskStatus) { viewModelScope.launch { report(repository.changeStatus(id, value)) } }
-    fun save(title: String, description: String, date: String) {
+    fun save(title: String, description: String, date: String, reminder: String) {
         val due = runCatching { editedDeadline(date, task.value?.dueAt, ZoneId.systemDefault()) }
             .getOrElse { feedback.value = "Укажите дату в формате ГГГГ-ММ-ДД"; return }
-        viewModelScope.launch { report(repository.edit(id, title, description, due)) }
+        val remind=runCatching { if(reminder.isBlank()) null else java.time.LocalDateTime.parse(reminder.trim().replace(' ','T')).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() }
+            .getOrElse { feedback.value="Напоминание: ГГГГ-ММ-ДД ЧЧ:ММ";return }
+        viewModelScope.launch { report(repository.edit(id, title, description, due, remind)) }
     }
     private fun report(result: Outcome<Unit>) {
         feedback.value = when (result) { is Outcome.Success -> "Сохранено"; is Outcome.Failure -> result.error.toUserMessage() }
@@ -125,27 +141,36 @@ fun TaskDetailsScreen(onNavigateBack: () -> Unit, viewModel: TaskDetailsViewMode
     val commentBusy by viewModel.commentBusy.collectAsStateWithLifecycle()
     val commentText by viewModel.commentText.collectAsStateWithLifecycle()
     val members by viewModel.members.collectAsStateWithLifecycle()
+    val assignmentBusy by viewModel.assignmentBusy.collectAsStateWithLifecycle()
     Scaffold(topBar = { MangoTopAppBar(title = "Задача", onNavigateBack = onNavigateBack) }) { padding ->
         val value = task
         if (value == null) { Text("Задача недоступна", Modifier.padding(padding).padding(16.dp)); return@Scaffold }
         var title by remember(value.id) { mutableStateOf(value.title) }
         var description by remember(value.id) { mutableStateOf(value.description.orEmpty()) }
         var date by remember(value.id) { mutableStateOf(value.dueAt?.atZone(ZoneId.systemDefault())?.toLocalDate()?.toString().orEmpty()) }
+        var reminder by remember(value.id) { mutableStateOf(value.remindAt?.atZone(ZoneId.systemDefault())?.toLocalDateTime()?.toString().orEmpty()) }
         Column(Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(title, { title = it }, label = { Text("Название") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(description, { description = it }, label = { Text("Описание") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(date, { date = it }, label = { Text("Срок: ГГГГ-ММ-ДД; пусто — без срока") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.save(title, description, date) }, enabled = title.isNotBlank()) { Text("Сохранить") }
+            OutlinedTextField(reminder, {reminder=it},label={Text("Напоминание: ГГГГ-ММ-ДД ЧЧ:ММ")},supportingText={Text("Местное время телефона; пусто — без напоминания")},modifier=Modifier.fillMaxWidth())
+            Button(onClick = { viewModel.save(title, description, date, reminder) }, enabled = title.isNotBlank()) { Text("Сохранить") }
             feedback?.let { Text(it) }
             Text("Статус: ${value.status.label()}")
             TaskStatus.entries.forEach { status ->
                 FilterChip(selected = value.status == status, onClick = { viewModel.status(status) }, label = { Text(status.label()) })
             }
             value.source?.let { Text("Из сообщения: ${it.textSnapshot.orEmpty()}") }
+            if (value.conversationId != null) {
+                Text("Совместная задача: участники чата видят её в разделе «Команда», назначенные исполнители — также в «Мои».")
+                Text("Назначить исполнителей", style = MaterialTheme.typography.titleMedium)
+            } else Text("Личная задача. Для совместной задачи выберите чат при создании.")
+            if (value.syncStatus != com.mango.core.model.SyncStatus.SYNCED) Text("Назначение станет доступно после отправки задачи на сервер.")
             if (value.assignees.isNotEmpty()) Text("Исполнители: ${value.assignees.joinToString { it.displayName }}")
             members.forEach { member ->
                 val assigned = value.assignees.any { it.id == member.user.id }
-                FilterChip(selected = assigned, onClick = { viewModel.assign(member.user.id.value, !assigned) }, label = { Text(member.user.displayName) })
+                FilterChip(selected = assigned, enabled = !assignmentBusy && value.syncStatus == com.mango.core.model.SyncStatus.SYNCED,
+                    onClick = { viewModel.assign(member.user.id.value, !assigned) }, label = { Text(member.user.displayName) })
             }
             HorizontalDivider()
             Text("Комментарии", style = MaterialTheme.typography.titleMedium)

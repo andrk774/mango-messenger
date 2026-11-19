@@ -37,6 +37,7 @@ fun Route.realtimeRoutes(
     tokenService: TokenService,
     syncService: SyncService,
     authTimeoutMillis: Long = DEFAULT_AUTH_TIMEOUT_MILLIS,
+    sessionAllowed: suspend (com.mango.backend.auth.AccessClaims) -> Boolean = { true },
 ) {
     webSocket("/v1/ws") {
         // Аутентификация выполняется первым кадром, а не заголовком и не
@@ -45,7 +46,7 @@ fun Route.realtimeRoutes(
         // прокси. Кадр видит только приложение.
         val claims = withTimeoutOrNull(authTimeoutMillis) { awaitAuthentication(tokenService) }
 
-        if (claims == null) {
+        if (claims == null || !sessionAllowed(claims)) {
             sendFrame(
                 ServerFrame.Error(
                     CloseReasons.UNAUTHENTICATED,
@@ -74,17 +75,35 @@ fun Route.realtimeRoutes(
             // кадров не должно ждать медленного клиента, и наоборот.
             val sender = launch {
                 for (event in session.outgoing) {
+                    if (!sessionAllowed(claims)) {
+                        close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, CloseReasons.UNAUTHENTICATED))
+                        break
+                    }
                     sendFrame(ServerFrame.Event(event))
+                }
+            }
+            val accessWatcher = launch {
+                while (true) {
+                    kotlinx.coroutines.delay(5_000)
+                    if (!sessionAllowed(claims)) {
+                        close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, CloseReasons.UNAUTHENTICATED))
+                        break
+                    }
                 }
             }
 
             try {
                 for (frame in incoming) {
                     if (frame !is Frame.Text) continue
+                    if (!sessionAllowed(claims)) {
+                        close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, CloseReasons.UNAUTHENTICATED))
+                        break
+                    }
                     handleClientFrame(frame.readText(), session)
                 }
             } finally {
                 sender.cancel()
+                accessWatcher.cancel()
             }
         } catch (_: ClosedReceiveChannelException) {
             // Обычное завершение: клиент закрыл соединение.

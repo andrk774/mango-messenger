@@ -24,4 +24,6 @@ dependencies {
     testImplementation(projects.core.testing)
     testImplementation(libs.robolectric)
     testImplementation(libs.okhttp)
+    // Поддельный AuthApi в тестах входа возвращает retrofit2.Response.
+    testImplementation(libs.retrofit)
 }

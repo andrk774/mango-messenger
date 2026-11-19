@@ -58,6 +58,7 @@ sealed interface ConversationEvent {
 
 @HiltViewModel
 class ConversationViewModel @Inject constructor(
+    private val accountFeatures: com.mango.core.network.AccountFeaturesRemote,
     private val messagingRemote: com.mango.core.network.MessagingRemoteDataSource,
     private val eventApplier: com.mango.core.sync.EventApplier,
     savedStateHandle: SavedStateHandle,
@@ -65,7 +66,18 @@ class ConversationViewModel @Inject constructor(
     private val conversationRepository: ConversationRepository,
     private val userRepository: UserRepository,
     syncStatusRepository: SyncStatusRepository,
+    settingsStore: com.mango.core.datastore.SettingsStore,
 ) : ViewModel() {
+    val appearance = settingsStore.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.mango.core.datastore.UserSettings())
+
+    suspend fun reportUser(target:String,reason:String):String = when(val result=accountFeatures.report(target,reason)) {
+        is Outcome.Success -> result.value.id
+        is Outcome.Failure -> throw IllegalStateException(result.error.toUserMessage())
+    }
+    suspend fun transcribe(id:String):String = when(val result=accountFeatures.transcript(id)) {
+        is Outcome.Success -> result.value.text
+        is Outcome.Failure -> throw IllegalStateException(result.error.toUserMessage())
+    }
 
     private val conversationId: ConversationId = ConversationId(
         savedStateHandle.get<String>(Routes.ARG_CONVERSATION_ID).orEmpty(),
@@ -203,7 +215,11 @@ class ConversationViewModel @Inject constructor(
         }
     }
 
-    suspend fun sendVoice(uri: android.net.Uri): Boolean = when (val result = messageRepository.sendAttachment(conversationId, uri, null)) {
+    fun sendSticker(uri: android.net.Uri) {
+        viewModelScope.launch { sendUncaptionedAttachment(uri) }
+    }
+
+    suspend fun sendUncaptionedAttachment(uri: android.net.Uri): Boolean = when (val result = messageRepository.sendAttachment(conversationId, uri, null)) {
         is Outcome.Success -> true
         is Outcome.Failure -> { _events.emit(ConversationEvent.Message(result.error.toUserMessage())); false }
     }

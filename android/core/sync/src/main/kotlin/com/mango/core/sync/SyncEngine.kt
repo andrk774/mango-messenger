@@ -37,6 +37,7 @@ class SyncEngine @Inject constructor(
     private val tasksRemote: TasksRemoteDataSource,
     private val applier: EventApplier,
     private val logger: Logger,
+    private val accountGuard: com.mango.core.data.session.AccountGuard,
 ) {
 
     private val outboxDao = database.outboxDao()
@@ -54,7 +55,15 @@ class SyncEngine @Inject constructor(
      * Страницы применяются последовательно, курсор продвигается после
      * каждой: обрыв на середине не заставляет начинать заново.
      */
-    suspend fun catchUp(): Outcome<CatchUpResult> = mutex.withLock { catchUpLocked() }
+    suspend fun catchUp(): Outcome<CatchUpResult> =
+        verified { mutex.withLock { catchUpLocked() } }
+
+    /**
+     * События пишутся в базу владельца. Без подтверждённой сессии того же
+     * пользователя журнал не запрашивается и не применяется.
+     */
+    private suspend fun <T> verified(block: suspend () -> Outcome<T>): Outcome<T> =
+        accountGuard.withVerifiedOwner { block() } ?: Outcome.Failure(AppError.Unauthorized)
 
     /**
      * Тело догонки вынесено в отдельную функцию.
@@ -95,6 +104,9 @@ class SyncEngine @Inject constructor(
                     }
 
                     applier.applyBatch(body.events)
+                    // Joining an existing chat grants access to older tasks, but
+                    // their creation events predate this user's membership.
+                    if (body.events.any { it.type in TASK_ACCESS_EVENTS }) refreshTasksVerified()
                     applied += body.events.size
                     cursor = body.lastEventId
 
@@ -113,7 +125,9 @@ class SyncEngine @Inject constructor(
      * и подпиской на события не должно оставаться окна, в котором
      * изменения теряются.
      */
-    suspend fun bootstrap(): Outcome<Int> {
+    suspend fun bootstrap(): Outcome<Int> = verified { bootstrapVerified() }
+
+    private suspend fun bootstrapVerified(): Outcome<Int> {
         val response = remote.bootstrap()
         if (response is Outcome.Failure) return response
 
@@ -141,7 +155,7 @@ class SyncEngine @Inject constructor(
         logger.i(TAG, "первичная загрузка: ${body.items.size} чатов, курсор ${body.lastEventId}")
         // Задачи загружаются вместе с чатами: иначе после входа на новом
         // устройстве раздел задач был бы пуст до первого события.
-        refreshTasks()
+        refreshTasksVerified()
 
         return Outcome.Success(body.items.size)
     }
@@ -156,7 +170,9 @@ class SyncEngine @Inject constructor(
      * всё, что пользователь вправе видеть. Завершённые включены, чтобы
      * локальная копия не расходилась с сервером по статусам.
      */
-    suspend fun refreshTasks(): Outcome<Int> {
+    suspend fun refreshTasks(): Outcome<Int> = verified { refreshTasksVerified() }
+
+    private suspend fun refreshTasksVerified(): Outcome<Int> {
         var loaded = 0
         for (scope in listOf("mine", "team")) {
             when (val response = tasksRemote.tasks(scope = scope, includeCompleted = true)) {
@@ -183,7 +199,8 @@ class SyncEngine @Inject constructor(
         )
     }
 
-    private companion object {
+    companion object {
+        val TASK_ACCESS_EVENTS = setOf("CONVERSATION_CREATED", "CONVERSATION_MEMBER_ADDED")
         const val TAG = "SyncEngine"
     }
 }

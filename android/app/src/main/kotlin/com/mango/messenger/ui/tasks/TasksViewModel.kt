@@ -34,6 +34,8 @@ data class TasksUiState(
     val includeCompleted: Boolean = false,
     val tasks: List<Task> = emptyList(),
     val isCreating: Boolean = false,
+    val currentUserId: String? = null,
+    val incomingIds: Set<TaskId> = emptySet(),
 ) {
     val isEmpty: Boolean get() = !isLoading && tasks.isEmpty()
 
@@ -54,8 +56,12 @@ sealed interface TasksEvent {
 class TasksViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val syncEngine: SyncEngine,
+    conversations: com.mango.core.data.repository.ConversationRepository,
     conflictNotifier: TaskConflictNotifier,
+    private val users: com.mango.core.data.repository.UserRepository,
 ) : ViewModel() {
+    val availableChats = conversations.observeConversations()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val scope = MutableStateFlow(TaskScope.MINE)
     private val includeCompleted = MutableStateFlow(false)
@@ -76,12 +82,17 @@ class TasksViewModel @Inject constructor(
     ) { currentScope, withCompleted, creating ->
         Triple(currentScope, withCompleted, creating)
     }.flatMapLatest { (currentScope, withCompleted, creating) ->
-        taskRepository.observeTasks(currentScope, withCompleted).map { tasks ->
+        combine(taskRepository.observeTasks(TaskScope.MINE, withCompleted),
+            taskRepository.observeTasks(TaskScope.TEAM, withCompleted),users.observeCurrentUser()) { mine, team, user ->
+            val tasks=(mine+team).distinctBy {it.id}.sortedByDescending {it.createdAt}
+
             TasksUiState(
                 isLoading = false,
                 scope = currentScope,
                 includeCompleted = withCompleted,
                 tasks = tasks,
+                currentUserId = user?.id?.value,
+                incomingIds = mine.filter {it.createdBy != user?.id}.map {it.id}.toSet(),
                 isCreating = creating,
             )
         }
@@ -92,8 +103,6 @@ class TasksViewModel @Inject constructor(
     )
 
     init {
-        refresh()
-
         // Правка, проигравшая конкурирующему изменению, не должна исчезать
         // молча: пользователь узнаёт об этом сразу, а не обнаруживает сам.
         viewModelScope.launch {
@@ -149,11 +158,11 @@ class TasksViewModel @Inject constructor(
         }
     }
 
-    fun onCreateTask(title: String, priority: TaskPriority = TaskPriority.MEDIUM) {
+    fun onCreateTask(title: String, priority: TaskPriority = TaskPriority.MEDIUM, conversationId: com.mango.core.model.ConversationId? = null) {
         viewModelScope.launch {
             isCreating.value = true
             try {
-                when (val result = taskRepository.create(NewTaskDraft(title = title, priority = priority))) {
+                when (val result = taskRepository.create(NewTaskDraft(title = title, priority = priority, conversationId = conversationId))) {
                     is Outcome.Success -> _events.emit(TasksEvent.Created(result.value))
                     is Outcome.Failure -> _events.emit(
                         TasksEvent.Error(result.error.toUserMessage()),

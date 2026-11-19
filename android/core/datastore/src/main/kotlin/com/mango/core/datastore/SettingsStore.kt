@@ -21,10 +21,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
+enum class ChatBackground { DEFAULT, BLUE, MINT, LILAC, SAND }
 
 data class UserSettings(
+    val chatBackground: ChatBackground = ChatBackground.DEFAULT,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val dynamicColorEnabled: Boolean = true,
+    val dynamicColorEnabled: Boolean = false,
     val messageNotificationsEnabled: Boolean = true,
     val taskNotificationsEnabled: Boolean = true,
     /**
@@ -65,10 +67,11 @@ class SettingsStore @Inject constructor(
         .catch { throwable -> if (throwable is IOException) emit(emptyPreferences()) else throw throwable }
         .map { preferences ->
             UserSettings(
+                chatBackground = preferences[Keys.CHAT_BACKGROUND]?.let {runCatching {ChatBackground.valueOf(it)}.getOrNull()} ?: ChatBackground.DEFAULT,
                 themeMode = preferences[Keys.THEME_MODE]
                     ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
                     ?: ThemeMode.SYSTEM,
-                dynamicColorEnabled = preferences[Keys.DYNAMIC_COLOR] ?: true,
+                dynamicColorEnabled = preferences[Keys.DYNAMIC_COLOR] ?: false,
                 messageNotificationsEnabled = preferences[Keys.MESSAGE_NOTIFICATIONS] ?: true,
                 taskNotificationsEnabled = preferences[Keys.TASK_NOTIFICATIONS] ?: true,
                 showMessagePreviewInNotification = preferences[Keys.MESSAGE_PREVIEW] ?: false,
@@ -79,6 +82,7 @@ class SettingsStore @Inject constructor(
         }
 
     suspend fun setThemeMode(mode: ThemeMode) = edit { it[Keys.THEME_MODE] = mode.name }
+    suspend fun setChatBackground(background: ChatBackground) = edit {it[Keys.CHAT_BACKGROUND]=background.name}
 
     suspend fun setDynamicColorEnabled(enabled: Boolean) =
         edit { it[Keys.DYNAMIC_COLOR] = enabled }
@@ -110,6 +114,7 @@ class SettingsStore @Inject constructor(
     }
 
     private object Keys {
+        val CHAT_BACKGROUND = stringPreferencesKey("chat_background")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val MESSAGE_NOTIFICATIONS = booleanPreferencesKey("message_notifications")

@@ -1,6 +1,7 @@
 package com.mango.messenger
 
 import android.os.Bundle
+import androidx.compose.ui.unit.dp
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -172,18 +173,24 @@ private fun MangoApp(
     }
 
     Scaffold(
+        contentWindowInsets=androidx.compose.foundation.layout.WindowInsets(0,0,0,0),
         bottomBar = {
             // Нижняя навигация скрывается на вложенных экранах:
             // в переписке и карточке задачи нужен весь экран.
             val isTopLevel = topLevelDestinations.any { destination ->
                 currentDestination?.hierarchy?.any { it.route == destination.route } == true
             }
-            if (isTopLevel) {
-                NavigationBar {
+            if (isTopLevel || currentDestination?.route in listOf(Routes.CONTACTS,Routes.NOTIFICATIONS)) {
+                NavigationBar(containerColor=androidx.compose.material3.MaterialTheme.colorScheme.surface,tonalElevation=0.dp) {
                     topLevelDestinations.forEach { destination ->
                         val selected = currentDestination?.hierarchy
                             ?.any { it.route == destination.route } == true
                         NavigationBarItem(
+                            colors=androidx.compose.material3.NavigationBarItemDefaults.colors(
+                                selectedIconColor=androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                selectedTextColor=androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                indicatorColor=androidx.compose.ui.graphics.Color.Transparent,
+                            ),
                             selected = selected,
                             onClick = { navController.navigateToTopLevel(destination.route) },
                             icon = {
@@ -210,6 +217,7 @@ private fun MangoApp(
         ) {
             composable(Routes.CHATS) {
                 ChatsScreen(
+                    onWelcome = { navController.navigate(Routes.TASKS) },
                     onConversationClick = { conversation ->
                         navController.navigate(Routes.conversation(conversation.id.value))
                     },
@@ -221,9 +229,20 @@ private fun MangoApp(
             }
             composable(Routes.TASKS) {
                 TasksScreen(
+                    onProfile = { navController.navigate(Routes.SETTINGS) },
+                    onNewChat = { navController.navigate("welcome-chat") },
                     onTaskClick = { taskId ->
                         navController.navigate(Routes.taskDetails(taskId.value))
                     },
+                    modifier = Modifier.padding(padding),
+                )
+            }
+            composable("welcome-chat") {
+                ChatsScreen(
+                    onConversationClick = { navController.navigate(Routes.conversation(it.id.value)) },
+                    onOpenConversationById = { navController.navigate(Routes.conversation(it)) },
+                    onWelcome = { navController.navigate(Routes.TASKS) },
+                    startNewChat = true,
                     modifier = Modifier.padding(padding),
                 )
             }
@@ -238,7 +257,7 @@ private fun MangoApp(
                 )
             }
             composable(Routes.SETTINGS) {
-                SettingsScreen(onSignOut = onSignOut, modifier = Modifier.padding(padding))
+                SettingsScreen(onSignOut = onSignOut, onContacts={navController.navigate(Routes.CONTACTS)}, onNotifications={navController.navigate(Routes.NOTIFICATIONS)}, modifier = Modifier.padding(padding))
             }
 
             composable(Routes.CONVERSATION) {

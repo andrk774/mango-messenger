@@ -74,6 +74,19 @@ interface AuthApi {
     @GET("v1/users/me")
     suspend fun me(): Response<CurrentUserDto>
 
+    /**
+     * Профиль кандидата на вход — по токену, который ещё не сохранён.
+     *
+     * Маркер [com.mango.core.network.auth.CANDIDATE_HEADER] запрещает
+     * подменять этот токен токеном сохранённой сессии при ответе 401:
+     * иначе профиль прежнего аккаунта выдал бы себя за кандидата.
+     */
+    @GET("v1/users/me")
+    suspend fun meAsCandidate(
+        @retrofit2.http.Header("Authorization") bearer: String,
+        @retrofit2.http.Header(com.mango.core.network.auth.CANDIDATE_HEADER) marker: String,
+    ): Response<CurrentUserDto>
+
     @PUT("v1/users/me/devices/push")
     suspend fun registerPush(@Body body: com.mango.core.network.dto.RegisterPushTokenRequestDto): Response<Unit>
 

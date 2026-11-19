@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: MANGO_FCM_CREDENTIALS_FILE
+              value: /run/secrets/firebase/firebase-service-account.json
+          volumeMounts:
+            - name: firebase
+              mountPath: /run/secrets/firebase
+              readOnly: true
+      volumes:
+        - name: firebase
+          secret:
+            secretName: mango-firebase
+            defaultMode: 0440

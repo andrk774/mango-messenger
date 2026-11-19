@@ -9,6 +9,9 @@ import okhttp3.Response
 import okhttp3.Route
 import javax.inject.Inject
 
+/** Маркер запроса с токеном кандидата на вход (см. AuthApi.meAsCandidate). */
+const val CANDIDATE_HEADER = "X-Mango-Candidate"
+
 /**
  * Подстановка токена доступа.
  *
@@ -68,6 +71,11 @@ class TokenAuthenticator @Inject constructor(
 ) : Authenticator {
 
     override fun authenticate(route: Route?, response: Response): Request? {
+        // Запрос кандидата на вход несёт собственный токен. Обновлять
+        // сохранённую сессию и подставлять её токен нельзя: это токен
+        // другого, возможно, аккаунта.
+        if (response.request.header(CANDIDATE_HEADER) != null) return null
+
         // Защита от зацикливания: если запрос уже повторялся с новым
         // токеном и снова получил 401, обновление не помогает.
         if (response.priorResponseCount() >= 1) {

@@ -58,6 +58,7 @@ class RealtimeClient @Inject constructor(
     private val json: Json,
     private val dispatchers: DispatcherProvider,
     private val logger: Logger,
+    private val accountGuard: com.mango.core.data.session.AccountGuard,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.io)
@@ -71,6 +72,10 @@ class RealtimeClient @Inject constructor(
 
     /** Идентификатор последнего применённого события — для поиска разрывов. */
     private val lastEventId = AtomicLong(0)
+
+    /** Владелец, под которым открыто текущее соединение. */
+    @Volatile
+    private var connectedOwner: String? = null
 
     private var attempt = 0
 
@@ -115,6 +120,16 @@ class RealtimeClient @Inject constructor(
                 logger.d(TAG, "нет токена, соединение не открывается")
                 return
             }
+
+            // Сокет доставляет события владельца токена в базу владельца
+            // базы. Если это разные люди, соединение не открывается.
+            val owner = accountGuard.verifiedOwner()
+            if (owner == null) {
+                _state.value = ConnectionState.UNAUTHENTICATED
+                logger.i(TAG, "владелец сессии не подтверждён, соединение не открывается")
+                return
+            }
+            connectedOwner = owner
 
             _state.value = ConnectionState.CONNECTING
             val closedReason = openAndAwaitClose(token)
@@ -220,8 +235,20 @@ class RealtimeClient @Inject constructor(
                     syncEngine.catchUp()
                     lastEventId.set(syncEngine.currentCursor())
                 } else {
-                    applier.applyRealtime(frame.event)
+                    val applied = accountGuard.withVerifiedOwner { owner ->
+                        // Сессия сменилась после подключения: событие относится
+                        // к прежнему владельцу и в эту базу не пишется.
+                        if (owner != connectedOwner) return@withVerifiedOwner false
+                        applier.applyRealtime(frame.event)
+                        true
+                    } == true
+                    if (!applied) {
+                        logger.w(TAG, "событие отброшено: владелец сессии сменился или не подтверждён")
+                        webSocket?.close(NORMAL_CLOSURE, "session changed")
+                        return
+                    }
                     lastEventId.set(maxOf(lastEventId.get(), frame.event.id))
+                    if (frame.event.type in SyncEngine.TASK_ACCESS_EVENTS) syncEngine.refreshTasks()
                 }
 
                 webSocket?.send(

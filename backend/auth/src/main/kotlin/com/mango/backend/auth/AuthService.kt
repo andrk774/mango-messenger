@@ -1,5 +1,9 @@
 package com.mango.backend.auth
 
+import com.mango.backend.common.isBlocked
+import com.mango.backend.common.queryOne
+import com.mango.backend.common.update
+
 import com.mango.backend.common.AppException
 import com.mango.backend.common.Database
 import com.mango.backend.common.IdGenerator
@@ -40,6 +44,24 @@ class AuthService(
 ) {
 
     private val log = LoggerFactory.getLogger(AuthService::class.java)
+
+    suspend fun updateProfile(owner: UUID, body: ProfileUpdate) {
+        val name = body.displayName.trim()
+        val username = body.username.trim()
+        validate {
+            requireNotBlank(name, "displayName", "Укажите имя")
+            requireMatches(username, "username", USERNAME_REGEX, USERNAME_HINT)
+        }
+        if (name.length > 80 || body.bio.length > 280) throw AppException.BadRequest("Имя — до 80 символов, описание — до 280")
+        try {
+            database.transaction { c ->
+                c.update("UPDATE users SET display_name=?,username=?,bio=?,updated_at=now() WHERE id=?", name, username, body.bio.trim(), owner)
+            }
+        } catch (e: SQLException) {
+            if (e.isUniqueViolation()) throw AppException.Conflict("Это имя пользователя уже занято", listOf("username"))
+            throw e
+        }
+    }
 
     // ──────────────────────────── регистрация ────────────────────────────
 
@@ -141,6 +163,13 @@ class AuthService(
             ) ?: throw AppException.BadRequest("Код неверен или устарел")
 
             repository.markEmailVerified(connection, userId, now)
+            // Same transaction as verification; repeated verification cannot reset progress.
+            for (kind in listOf("AVATAR", "INVITE", "CHAT", "TASK")) {
+                connection.update(
+                    "INSERT INTO welcome_tasks(user_id,kind) VALUES (?,?) ON CONFLICT DO NOTHING",
+                    userId, kind,
+                )
+            }
         }
     }
 
@@ -179,12 +208,13 @@ class AuthService(
         // Параметры стоимости могли вырасти с момента регистрации —
         // удачный вход это единственный момент, когда пароль доступен
         // в открытом виде и его можно перехешировать.
-        if (passwordHasher.needsRehash(user.passwordHash)) {
-            val updated = passwordHasher.hash(command.password)
-            database.transaction { repository.updatePasswordHash(it, user.id, updated, now) }
-        }
-
         return database.transaction { connection ->
+            val currentHash=connection.queryOne("SELECT password_hash FROM users WHERE id=? FOR UPDATE", user.id) { it.getString(1) }
+            if(currentHash != user.passwordHash) throw AppException.Unauthorized(INVALID_CREDENTIALS)
+            if (connection.isBlocked(user.id)) throw AppException.Forbidden("Аккаунт заблокирован")
+            if (passwordHasher.needsRehash(user.passwordHash)) {
+                repository.updatePasswordHash(connection,user.id,passwordHasher.hash(command.password),now)
+            }
             val deviceId = command.device?.let { device ->
                 ids.newId().also {
                     repository.insertDevice(
@@ -234,8 +264,12 @@ class AuthService(
         // с ним — защита не сработала бы вовсе. Отказ выбрасывается
         // ПОСЛЕ фиксации изменений.
         val outcome = database.transaction { connection ->
-            val session = repository.findSessionByRefreshHash(connection, hash)
+            var session = repository.findSessionByRefreshHash(connection, hash)
                 ?: return@transaction RefreshOutcome.UnknownToken
+
+            connection.queryOne("SELECT id FROM users WHERE id=? FOR UPDATE", session.userId) { it.getString("id") }
+            session = repository.findSessionByRefreshHash(connection, hash) ?: return@transaction RefreshOutcome.UnknownToken
+            if (connection.isBlocked(session.userId)) return@transaction RefreshOutcome.UnknownToken
 
             if (!session.isActive) {
                 val revoked = repository.revokeAllSessionsReturningIds(

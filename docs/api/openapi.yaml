@@ -678,7 +678,7 @@ paths:
               type: object
               required: [emoji, add]
               properties:
-                emoji: { type: string, enum: ['👍', '❤️', '😂', '😮', '😢', '🙏'] }
+                emoji: { type: string, enum: ['👍', '👎', '❤️', '😂', '😮', '😢', '🙏', '🔥', '🎉', '👏', '😍', '🥰', '😊', '😁', '😎', '🤔', '😅', '😭', '😡', '🤯', '💯', '✅', '💪', '🤝', '👀', '🚀', '⭐', '💔', '🤗', '🫡'] }
                 add: { type: boolean }
       responses:
         '200':

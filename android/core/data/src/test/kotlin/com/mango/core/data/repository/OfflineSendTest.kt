@@ -260,16 +260,73 @@ class OfflineSendTest {
     }
 
     @Test
+    fun `retry legacy m4a preserves file and message key and repairs upload dependency`() = runTest {
+        val file = java.io.File.createTempFile("legacy-voice", ".m4a").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val key = queueFailedVoice(file.path)
+        assertTrue(messageRepository.retry(key) is Outcome.Success)
+        val sendOp = database.outboxDao().findByClientOpId(key.value)!!
+        val uploadOp = database.outboxDao().findByClientOpId("legacy-upload")!!
+        val upload = OutboxJson.decodeFromString<com.mango.core.data.outbox.UploadAttachmentPayload>(uploadOp.payloadJson)
+        val send = OutboxJson.decodeFromString<SendMessagePayload>(sendOp.payloadJson)
+        assertEquals("audio/mp4", upload.mimeType)
+        assertTrue(upload.attachmentId != "legacy-attachment")
+        assertEquals(key.value, send.clientMsgId)
+        assertEquals(listOf(upload.attachmentId), send.attachmentIds)
+        assertEquals(OutboxStatus.BLOCKED, sendOp.status)
+        assertEquals(OutboxStatus.PENDING, uploadOp.status)
+        assertEquals(listOf(uploadOp.id), database.outboxDao().nextBatch(time.nowMillis()).map { it.id })
+        assertEquals(listOf<Byte>(1, 2, 3), file.readBytes().toList())
+        assertNull(database.attachmentDao().findById("legacy-attachment")!!.messageId)
+        assertEquals(file.path, database.attachmentDao().findById(upload.attachmentId)!!.localUri)
+        // A second tap must reuse the repaired operation, not allocate another upload/message.
+        assertTrue(messageRepository.retry(key) is Outcome.Success)
+        assertEquals(uploadOp.entityId, database.outboxDao().findByClientOpId("legacy-upload")!!.entityId)
+        assertEquals(1, messageRepository.observeRecentMessages(conversationId).first().size)
+    }
+
+    @Test
+    fun `missing legacy voice file leaves failed operations untouched`() = runTest {
+        val key = queueFailedVoice(java.io.File(System.getProperty("java.io.tmpdir"), "missing-${java.util.UUID.randomUUID()}").path)
+        val before = database.outboxDao().all()
+        assertTrue(messageRepository.retry(key) is Outcome.Failure)
+        assertEquals(before, database.outboxDao().all())
+        assertNotNull(database.attachmentDao().findById("legacy-attachment")!!.messageId)
+    }
+
+    private suspend fun queueFailedVoice(path: String): com.mango.core.model.ClientOpId {
+        val key = (messageRepository.sendText(conversationId, "legacy") as Outcome.Success).value
+        val sendOp = database.outboxDao().findByClientOpId(key.value)!!
+        val send = OutboxJson.decodeFromString<SendMessagePayload>(sendOp.payloadJson)
+        database.attachmentDao().upsert(com.mango.core.database.entity.AttachmentEntity(
+            "legacy-attachment", key.value, null, "audio/mpeg", 3, "voice.m4a", null, path,
+            null, null, null, 0f, SyncStatus.FAILED, time.nowMillis(),
+        ))
+        val upload = com.mango.core.data.outbox.UploadAttachmentPayload(
+            "legacy-attachment", conversationId.value, path, "audio/mpeg", 3, "checksum", "voice.m4a",
+        )
+        database.outboxDao().enqueue(com.mango.core.data.outbox.outboxOperation(
+            "legacy-upload", OpType.UPLOAD_ATTACHMENT, "ATTACHMENT", "legacy-attachment",
+            OutboxJson.encodeToString(upload), time.nowMillis(),
+        ).copy(status = OutboxStatus.FAILED))
+        database.outboxDao().upsert(sendOp.copy(status = OutboxStatus.FAILED, dependsOnOpId = "legacy-upload",
+            payloadJson = OutboxJson.encodeToString(send.copy(type = "VOICE", attachmentIds = listOf("legacy-attachment")))))
+        return key
+    }
+
+    @Test
     fun `editing an offline task preserves identity and can clear its deadline`() = runTest {
         val id = (taskRepository.create(NewTaskDraft(title = "Before", dueAtMillis = 100000L)) as Outcome.Success).value
-        assertTrue(taskRepository.edit(id, "After", "Details", null) is Outcome.Success)
+        assertTrue(taskRepository.edit(id, "After", "Details", null, 200000L) is Outcome.Success)
         val task = taskRepository.observeTask(id).first()!!
         assertEquals("After", task.title)
         assertEquals("Details", task.description)
         assertNull(task.dueAt)
+        assertEquals(java.time.Instant.ofEpochMilli(200000L), task.remindAt)
         assertEquals(SyncStatus.PENDING, task.syncStatus)
-        assertTrue(taskRepository.edit(id, " ", null, null) is Outcome.Failure)
+        assertTrue(taskRepository.edit(id, " ", null, null, null) is Outcome.Failure)
         assertEquals("After", taskRepository.observeTask(id).first()!!.title)
+        assertTrue(taskRepository.edit(id, "After", "Details", null, null) is Outcome.Success)
+        assertNull(taskRepository.observeTask(id).first()!!.remindAt)
     }
 
     @Test
@@ -455,6 +512,29 @@ class OfflineSendTest {
             "черновик",
             database.conversationDao().findById(conversationId.value)!!.draft,
         )
+    }
+
+    @Test
+    fun `offline read receipt survives resync with stale server cursor`() = runTest {
+        val conversations = DefaultConversationRepository(
+            database = database,
+            remote = offlineRemote(),
+            idGenerator = UuidV7Generator(clockMillis = { time.nowMillis() }),
+            time = time,
+            dispatchers = testDispatchers,
+        )
+
+        assertTrue(conversations.markRead(conversationId, 7) is Outcome.Success)
+
+        val receipt = database.outboxDao().all().single { it.opType == OpType.MARK_READ }
+        assertEquals(OutboxStatus.PENDING, receipt.status)
+        assertEquals(conversationId.value, receipt.entityId)
+
+        // Карточка из списка чатов, полученная до доставки отметки.
+        val stale = database.conversationDao().findById(conversationId.value)!!.copy(lastReadSeq = 2)
+        database.conversationDao().upsertFromServer(stale)
+
+        assertEquals(7L, database.conversationDao().findById(conversationId.value)!!.lastReadSeq)
     }
 
     /**

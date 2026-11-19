@@ -98,6 +98,10 @@ object NetworkModule {
         tokenAuthenticator: TokenAuthenticator,
     ): OkHttpClient = base.newBuilder()
         .addInterceptor(authInterceptor)
+        .addInterceptor { chain ->
+            val configured=if(chain.request().url.encodedPath.endsWith("/transcript")) chain.withReadTimeout(190,TimeUnit.SECONDS) else chain
+            configured.proceed(chain.request())
+        }
         .authenticator(tokenAuthenticator)
         .build()
 
@@ -170,4 +174,8 @@ object NetworkModule {
     @Singleton
     fun provideTasksApi(@AuthenticatedClient retrofit: Retrofit): com.mango.core.network.api.TasksApi =
         retrofit.create(com.mango.core.network.api.TasksApi::class.java)
+
+    @Provides @Singleton
+    fun provideAccountFeaturesApi(@AuthenticatedClient retrofit:Retrofit):com.mango.core.network.AccountFeaturesApi =
+        retrofit.create(com.mango.core.network.AccountFeaturesApi::class.java)
 }

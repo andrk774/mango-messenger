@@ -21,6 +21,7 @@ data class ImportedFile(
     val fileName: String,
     val width: Int?,
     val height: Int?,
+    val durationMs: Long? = null,
 )
 
 /** Почему файл нельзя отправить — показывается пользователю как есть. */
@@ -134,6 +135,7 @@ class AttachmentFileStore @Inject constructor(
             fileName = displayName?.takeIf { it.isNotBlank() } ?: "file",
             width = width,
             height = height,
+            durationMs = if(mimeType.startsWith("audio/")||mimeType.startsWith("video/")) mediaDuration(target) else null,
         )
     }
 
@@ -153,6 +155,14 @@ class AttachmentFileStore @Inject constructor(
     private fun guessMime(name: String?): String? =
         name?.substringAfterLast('.', "")?.lowercase()?.takeIf { it.isNotEmpty() }
             ?.let { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it) }
+
+    private fun mediaDuration(file:File):Long? {
+        val metadata=android.media.MediaMetadataRetriever()
+        return try {
+            metadata.setDataSource(file.absolutePath)
+            metadata.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.takeIf {it>0}
+        }catch(_:Exception){null}finally{metadata.release()}
+    }
 }
 
 internal fun normalizeAttachmentMime(name: String?, declared: String?): String? {

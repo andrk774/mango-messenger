@@ -27,6 +27,7 @@ import com.mango.core.network.AttachmentsRemoteDataSource
 import com.mango.core.network.api.AttachmentsApi
 import com.mango.core.network.api.BlobTransferApi
 import com.mango.core.network.api.TasksApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import mockwebserver3.MockResponse
@@ -61,6 +62,7 @@ class OutboxProcessorTest {
 
     private lateinit var server: MockWebServer
     private lateinit var database: MangoDatabase
+    private lateinit var session: TestSession
     private lateinit var processor: OutboxProcessor
 
     private val time = MutableTimeProvider(Instant.ofEpochMilli(1_700_000_000_000))
@@ -78,6 +80,8 @@ class OutboxProcessorTest {
             ApplicationProvider.getApplicationContext(),
             MangoDatabase::class.java,
         ).allowMainThreadQueries().build()
+        session = TestSession(database)
+        session.signIn(me)
 
         val retrofit = Retrofit.Builder()
             .baseUrl(server.url("/"))
@@ -98,6 +102,7 @@ class OutboxProcessorTest {
             applier = EventApplier(database, json, NoOpLogger()),
             time = time,
             logger = NoOpLogger(),
+            accountGuard = session.guard,
             retryPolicy = RetryPolicy.Default,
         )
 
@@ -245,6 +250,145 @@ class OutboxProcessorTest {
             first.body!!.utf8().contains("op-1"),
         )
         assertTrue(second.body!!.utf8().contains("op-2"))
+    }
+
+    @Test
+    fun `confirmed read receipt completes only covered failed receipts`() = runTest {
+        enqueueLocalMessage(clientMsgId = "receipt", text = "fixture")
+        val template = database.outboxDao().findByClientOpId("receipt")!!
+        fun receipt(id: String, chat: String, seq: Long, status: OutboxStatus) = template.copy(
+            id = id, clientOpId = id, opType = OpType.MARK_READ, entityType = "CONVERSATION", entityId = chat,
+            status = status, payloadJson = OutboxJson.encodeToString(com.mango.core.data.outbox.MarkReadPayload(chat, seq)),
+        )
+        database.outboxDao().upsert(receipt("receipt", "chat", 5, OutboxStatus.PENDING))
+        database.outboxDao().enqueue(receipt("old", "chat", 1, OutboxStatus.FAILED))
+        database.outboxDao().enqueue(receipt("future", "chat", 9, OutboxStatus.FAILED))
+        database.outboxDao().enqueue(receipt("other", "other-chat", 1, OutboxStatus.FAILED))
+        server.enqueue(MockResponse.Builder().code(204).build())
+        assertEquals(1, processor.runOnce().processed)
+        assertNull(database.outboxDao().findByClientOpId("old"))
+        assertNotNull(database.outboxDao().findByClientOpId("future"))
+        assertNotNull(database.outboxDao().findByClientOpId("other"))
+    }
+
+    // ───────────── владелец сессии (межаккаунтная защита) ─────────────
+
+    private suspend fun enqueueReceipt(id: String, seq: Long) {
+        database.outboxDao().enqueue(
+            com.mango.core.database.entity.OutboxOperationEntity(
+                id = id, clientOpId = id, opType = OpType.MARK_READ,
+                entityType = "CONVERSATION", entityId = conversationId,
+                payloadJson = OutboxJson.encodeToString(com.mango.core.data.outbox.MarkReadPayload(conversationId, seq)),
+                status = OutboxStatus.PENDING, attemptCount = 0, nextAttemptAt = time.nowMillis(),
+                lastError = null, dependsOnOpId = null,
+                createdAt = time.nowMillis(), updatedAt = time.nowMillis(),
+            ),
+        )
+    }
+
+    @Test
+    fun `operations of database owner are not sent with another user's token`() = runTest {
+        enqueueReceipt("receipt-a", seq = 3)
+        enqueueLocalMessage(clientMsgId = "message-a", text = "от A")
+
+        // Сессия A истекла, вошёл B; база по-прежнему принадлежит A.
+        session.signIn("user-b")
+
+        val result = processor.runOnce()
+
+        assertEquals(0, result.processed)
+        assertEquals("ни один запрос не должен уйти под токеном B", 0, server.requestCount)
+        database.outboxDao().all().forEach {
+            assertEquals(OutboxStatus.PENDING, it.status)
+            assertEquals("попытки не расходуются", 0, it.attemptCount)
+        }
+    }
+
+    @Test
+    fun `nothing is sent and no attempts are spent without a session`() = runTest {
+        enqueueReceipt("receipt-a", seq = 3)
+        session.signOut()
+
+        repeat(10) { processor.runUntilIdle() }
+
+        assertEquals(0, server.requestCount)
+        val op = database.outboxDao().findByClientOpId("receipt-a")!!
+        assertEquals(OutboxStatus.PENDING, op.status)
+        assertEquals(0, op.attemptCount)
+    }
+
+    @Test
+    fun `legacy session token without owner blocks the queue`() = runTest {
+        enqueueReceipt("receipt-a", seq = 3)
+        // Токен без разбираемого sub: владелец не подтверждён.
+        session.tokens.save(com.mango.core.security.AuthTokens("opaque", "refresh", Long.MAX_VALUE))
+
+        assertEquals(0, processor.runOnce().processed)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `unauthorized keeps the operation pending without spending an attempt`() = runTest {
+        enqueueReceipt("receipt-1", seq = 1)
+        enqueueReceipt("receipt-2", seq = 2)
+        server.enqueue(MockResponse.Builder().code(401).build())
+
+        val result = processor.runOnce()
+
+        assertEquals(0, result.processed)
+        assertEquals(0, result.failed)
+        assertEquals("остаток порции после 401 не отправляется", 1, server.requestCount)
+        database.outboxDao().all().forEach {
+            assertEquals(OutboxStatus.PENDING, it.status)
+            assertEquals(0, it.attemptCount)
+        }
+    }
+
+    @Test
+    fun `owner session sends queued receipt`() = runTest {
+        enqueueReceipt("receipt-a", seq = 3)
+        server.enqueue(MockResponse.Builder().code(204).build())
+
+        assertEquals(1, processor.runOnce().processed)
+        val request = server.takeRequest()
+        assertEquals("/v1/conversations/$conversationId/read", request.url.encodedPath)
+        assertNull(database.outboxDao().findByClientOpId("receipt-a"))
+    }
+
+    @Test
+    fun `account switch waits for a running pass and blocks new ones`() = runTest {
+        val guard = session.guard
+        val passStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releasePass = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+
+        val pass = launch(kotlinx.coroutines.Dispatchers.Default) {
+            guard.withVerifiedOwner {
+                passStarted.complete(Unit)
+                releasePass.await()
+                synchronized(events) { events += "pass-end" }
+            }
+        }
+        passStarted.await()
+
+        val switch = launch(kotlinx.coroutines.Dispatchers.Default) {
+            guard.exclusive {
+                synchronized(events) { events += "switch" }
+                // Во время смены новый проход не допускается.
+                assertNull(guard.withVerifiedOwner { "должен быть отклонён" })
+                assertEquals(0, processor.runOnce().processed)
+            }
+        }
+
+        // Смена не начинается, пока идёт проход.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { kotlinx.coroutines.delay(200) }
+        assertEquals(emptyList<String>(), synchronized(events) { events.toList() })
+
+        releasePass.complete(Unit)
+        pass.join()
+        switch.join()
+        assertEquals(listOf("pass-end", "switch"), events)
+        assertEquals(0, server.requestCount)
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.mango.core.network.api.AuthApi
 import com.mango.core.network.di.PlainClient
 import com.mango.core.network.dto.RefreshRequestDto
 import com.mango.core.security.AuthTokens
+import com.mango.core.security.JwtClaims
 import com.mango.core.security.TokenStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -48,14 +49,36 @@ class SessionManager @Inject constructor(
 
     val isAuthenticated: Flow<Boolean> = tokenStore.tokens.map { it != null }
 
+    /** Владелец сохранённой сессии; `null` — сессии нет или владелец не подтверждён. */
+    val sessionUserId: Flow<String?> = tokenStore.tokens.map { it?.userId }
+
     /** Восстановление сессии при старте приложения. */
     suspend fun restore(): Boolean = tokenStore.load() != null
 
     fun currentAccessToken(): String? = tokenStore.tokens.value?.accessToken
 
-    suspend fun save(tokens: AuthTokens) = tokenStore.save(tokens)
+    /**
+     * Подтверждённый владелец сессии.
+     *
+     * Читает хранилище, если токены ещё не загружены: фоновый worker
+     * может стартовать без экрана, до восстановления сессии.
+     */
+    suspend fun currentUserId(): String? = (tokenStore.tokens.value ?: tokenStore.load())?.userId
 
-    suspend fun clear() = tokenStore.clear()
+    /**
+     * Запись сессии.
+     *
+     * Под тем же замком, что и обновление: обновление, начатое для прежней
+     * сессии, не может записать свой результат поверх только что
+     * сохранённой новой (см. [refresh]).
+     * Владелец всегда берётся из выданного сервером токена, а не из параметра.
+     */
+    suspend fun save(tokens: AuthTokens) = refreshMutex.withLock { saveLocked(tokens) }
+
+    suspend fun clear() = refreshMutex.withLock { tokenStore.clear() }
+
+    private suspend fun saveLocked(tokens: AuthTokens) =
+        tokenStore.save(tokens.copy(userId = JwtClaims.subject(tokens.accessToken)))
 
     /**
      * Обновляет пару токенов.
@@ -79,7 +102,7 @@ class SessionManager @Inject constructor(
 
         val body = response.body()
         if (!response.isSuccessful || body == null) {
-            if (response.code() == 401) {
+            if (response.code() == 401 && tokenStore.tokens.value?.refreshToken == current.refreshToken) {
                 // Сервер отверг refresh: сессия завершена, и локальные
                 // токены бесполезны. Хранить их означало бы бесконечно
                 // повторять заведомо провальный обмен.
@@ -89,7 +112,15 @@ class SessionManager @Inject constructor(
             return false
         }
 
-        tokenStore.save(
+        // Сравнение с исходной сессией: если её успели заменить (выход,
+        // вход другого пользователя), результат обмена прежней сессии
+        // не записывается поверх новой.
+        if (tokenStore.tokens.value?.refreshToken != current.refreshToken) {
+            logger.i(TAG, "сессия сменилась во время обновления, результат отброшен")
+            return tokenStore.tokens.value != null
+        }
+
+        saveLocked(
             AuthTokens(
                 accessToken = body.accessToken,
                 refreshToken = body.refreshToken,

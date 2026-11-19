@@ -61,6 +61,7 @@ class GroupsAndAttachmentsSyncTest {
 
     private lateinit var server: MockWebServer
     private lateinit var database: MangoDatabase
+    private lateinit var session: TestSession
     private lateinit var applier: EventApplier
     private lateinit var processor: OutboxProcessor
 
@@ -78,6 +79,8 @@ class GroupsAndAttachmentsSyncTest {
             ApplicationProvider.getApplicationContext(),
             MangoDatabase::class.java,
         ).allowMainThreadQueries().build()
+        session = TestSession(database)
+        session.signIn(me)
 
         val retrofit = Retrofit.Builder()
             .baseUrl(server.url("/"))
@@ -98,6 +101,7 @@ class GroupsAndAttachmentsSyncTest {
             conflicts = TaskConflictNotifier(),
             time = time,
             logger = NoOpLogger(),
+            accountGuard = session.guard,
             retryPolicy = RetryPolicy.Default,
         )
 

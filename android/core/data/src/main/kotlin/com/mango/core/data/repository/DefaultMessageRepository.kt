@@ -245,7 +245,7 @@ class DefaultMessageRepository @Inject constructor(
                         localUri = imported.file.path,
                         width = imported.width,
                         height = imported.height,
-                        durationMs = null,
+                        durationMs = imported.durationMs,
                         uploadProgress = 0f,
                         syncStatus = SyncStatus.PENDING,
                         createdAt = now,
@@ -268,6 +268,7 @@ class DefaultMessageRepository @Inject constructor(
                                 fileName = imported.fileName,
                                 width = imported.width,
                                 height = imported.height,
+                                durationMs = imported.durationMs,
                             ),
                         ),
                         nowMillis = now,
@@ -337,6 +338,33 @@ class DefaultMessageRepository @Inject constructor(
             val now = time.nowMillis()
             runCatching {
                 database.withTransaction {
+                    val current = outboxDao.findByClientOpId(clientOpId.value)
+                        ?: return@withTransaction
+                    val dependency = current.dependsOnOpId?.let { outboxDao.findByClientOpId(it) }
+                    if (current.opType == OpType.SEND_MESSAGE && dependency?.opType == OpType.UPLOAD_ATTACHMENT &&
+                        dependency.status == com.mango.core.database.entity.OutboxStatus.FAILED) {
+                        val upload = OutboxJson.decodeFromString<com.mango.core.data.outbox.UploadAttachmentPayload>(dependency.payloadJson)
+                        check(java.io.File(upload.localPath).isFile) { "Исходный файл недоступен; повтор не изменён" }
+                        val mime = com.mango.core.data.attachment.normalizeAttachmentMime(upload.fileName, upload.mimeType)!!
+                        if (mime != upload.mimeType) {
+                            // Rejected server metadata is immutable. Reuse the file and message
+                            // idempotency key, but allocate a new upload id for corrected metadata.
+                            val attachment = checkNotNull(attachmentDao.findById(upload.attachmentId))
+                            val replacementId = idGenerator.newId()
+                            attachmentDao.upsert(attachment.copy(messageId = null))
+                            attachmentDao.upsert(attachment.copy(id = replacementId, mimeType = mime,
+                                syncStatus = SyncStatus.PENDING, uploadProgress = 0f, remoteUrl = null))
+                            outboxDao.upsert(dependency.copy(entityId = replacementId,
+                                payloadJson = OutboxJson.encodeToString(upload.copy(attachmentId = replacementId, mimeType = mime))))
+                            val send = OutboxJson.decodeFromString<SendMessagePayload>(current.payloadJson)
+                            outboxDao.upsert(current.copy(payloadJson = OutboxJson.encodeToString(send.copy(
+                                attachmentIds = send.attachmentIds.map { if (it == upload.attachmentId) replacementId else it },
+                            ))))
+                        } else {
+                            attachmentDao.updateStatus(upload.attachmentId, SyncStatus.PENDING, 0f)
+                        }
+                        outboxDao.scheduleRetry(dependency.id, now, null, now)
+                    }
                     // Повтор вручную: сбрасываем расписание, но НЕ счётчик попыток —
                     // он нужен для диагностики «залипших» операций.
                     outboxDao.scheduleRetry(
@@ -345,6 +373,8 @@ class DefaultMessageRepository @Inject constructor(
                         error = null,
                         nowMillis = now,
                     )
+                    if (dependency != null) outboxDao.updateStatus(current.id,
+                        com.mango.core.database.entity.OutboxStatus.BLOCKED, now)
                     messageDao.updateStatus(
                         id = operation.entityId,
                         status = MessageDeliveryStatus.PENDING,

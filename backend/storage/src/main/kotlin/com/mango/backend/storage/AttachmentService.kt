@@ -199,6 +199,15 @@ class AttachmentService(
         )
     }
 
+    /** Only readable, clean audio may be sent to the private transcription worker. */
+    suspend fun audioForTranscription(userId:UUID,attachmentId:UUID): java.io.InputStream {
+        val access=downloadUrl(userId,attachmentId)
+        if(!access.mimeType.startsWith("audio/")) throw AppException.Validation(mapOf("audio" to "Нужно голосовое сообщение"))
+        if(access.sizeBytes>20*1024*1024) throw AppException.Validation(mapOf("audio" to "Для расшифровки файл должен быть не больше 20 МБ"))
+        val record=database.readOnly { repository.find(it,attachmentId) } ?: throw AppException.Forbidden("Вложение недоступно")
+        return withContext(Dispatchers.IO) { storage.open(record.storageKey) } ?: throw AppException.Unavailable("Файл отсутствует")
+    }
+
     suspend fun open(attachmentId: UUID, expires: Long, signature: String): DownloadableFile {
         if (!signer.verify(UrlSigner.DOWNLOAD, attachmentId, expires, signature, time.now())) {
             throw AppException.Forbidden("Ссылка недействительна или истекла")

@@ -214,6 +214,18 @@ interface ConversationDao {
     )
     suspend fun findDirectConversation(currentUserId: String, otherUserId: String): ConversationEntity?
 
+    /** Есть ли по чату отметка прочтения, которую сервер ещё не получил. */
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM outbox_operations
+            WHERE op_type = 'MARK_READ' AND entity_id = :conversationId
+              AND status IN ('PENDING', 'IN_FLIGHT', 'BLOCKED')
+        )
+        """,
+    )
+    suspend fun hasUnsentReadReceipt(conversationId: String): Boolean
+
     /**
      * Запись серверной карточки чата с сохранением локальных полей.
      *
@@ -232,6 +244,16 @@ interface ConversationDao {
                     draft = existing.draft,
                     isArchived = existing.isArchived,
                     pinnedMessageCount = existing.pinnedMessageCount,
+                    // Локальный курсор опережает серверный, пока отметка
+                    // прочтения ждёт в очереди: карточка, полученная до её
+                    // доставки, не должна возвращать прочитанное в непрочитанное.
+                    // Без такой операции источник истины — сервер: иначе после
+                    // смены аккаунта без очистки базы остался бы чужой курсор.
+                    lastReadSeq = if (hasUnsentReadReceipt(conversation.id)) {
+                        maxOf(existing.lastReadSeq, conversation.lastReadSeq)
+                    } else {
+                        conversation.lastReadSeq
+                    },
                 )
             },
         )

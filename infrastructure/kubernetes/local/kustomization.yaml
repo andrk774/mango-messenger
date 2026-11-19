@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mango-dev
+resources:
+  - namespace.yaml
+  - backend.yaml
+  - dependencies.json
+configMapGenerator:
+  - name: mango-config
+    literals:
+      - MANGO_ENV=LOCAL
+      - MANGO_HTTP_PORT=8080
+      - MANGO_DB_URL=jdbc:postgresql://postgres:5432/mango
+      - MANGO_DB_USER=mango
+      - MANGO_REDIS_URL=redis://redis:6379
+      - MANGO_SMTP_HOST=mailpit
+      - MANGO_SMTP_PORT=1025
+      - MANGO_SMTP_SECURITY=NONE
+      - MANGO_MAIL_FROM=noreply@mango.local
+      - MANGO_STORAGE_DIR=/data/attachments
+images:
+  - name: mango-backend
+    newTag: k8s-local

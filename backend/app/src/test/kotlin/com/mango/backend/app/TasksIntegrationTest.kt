@@ -491,6 +491,9 @@ class TasksIntegrationTest : IntegrationTestBase() {
 
         val team: TasksResponse = client.get("/v1/tasks?scope=team") { bearerAuth(boris.accessToken) }.body()
         assertEquals(setOf(assignedToBoris, annaOnly), team.items.map { it.id }.toSet())
+        client.assignees(anna, annaOnly, add = listOf(borisId))
+        val afterAssignment: TasksResponse = client.get("/v1/tasks?scope=mine") { bearerAuth(boris.accessToken) }.body()
+        assertEquals(setOf(assignedToBoris, annaOnly), afterAssignment.items.map { it.id }.toSet())
     }
 
     // ─────────────────────────── вспомогательное ───────────────────────────

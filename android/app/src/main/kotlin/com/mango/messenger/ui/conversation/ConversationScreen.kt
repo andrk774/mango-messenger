@@ -93,10 +93,16 @@ fun ConversationScreen(
     viewModel: ConversationViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val appearance by viewModel.appearance.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
     val context = LocalContext.current
     var showSearch by remember { mutableStateOf(false) }
+    var showEmoji by remember { mutableStateOf(false) }
+    var showStickers by remember { mutableStateOf(false) }
+    if (showEmoji) EmojiPicker("Эмоджи", composerEmojis, onPick = {
+        viewModel.onComposerChange(state.composerText + it)
+    }, onDismiss = { showEmoji = false })
     if (showSearch) MessageSearchDialog(viewModel, onDismiss = { showSearch = false })
 
     // Системный выбор файла: приложению не нужно разрешение на чтение
@@ -104,6 +110,13 @@ fun ConversationScreen(
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::sendAttachment)
     }
+    val pickSticker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(viewModel::sendSticker)
+    }
+    if (showStickers) StickerPicker(onSend = viewModel::sendUncaptionedAttachment, onOwnPicture = {
+        showStickers = false
+        pickSticker.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif"))
+    }, onDismiss = { showStickers = false })
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -141,6 +154,7 @@ fun ConversationScreen(
 
     Scaffold(
         modifier = modifier,
+        containerColor = com.mango.messenger.ui.settings.chatBackgroundColor(appearance.chatBackground),
         topBar = {
             ConversationTopAppBar(
                 title = state.title,
@@ -188,11 +202,17 @@ fun ConversationScreen(
                     onReaction = viewModel::react,
                     onOpenAttachment = viewModel::openAttachment,
                     loadImage = viewModel::imageFile,
+                    onReport = viewModel::reportUser,
+                    onTranscribe = viewModel::transcribe,
                     modifier = Modifier.weight(1f),
                 )
             }
 
-            VoiceComposer(onSend = viewModel::sendVoice)
+            VoiceComposer(onSend = viewModel::sendUncaptionedAttachment)
+            Row {
+                androidx.compose.material3.TextButton(onClick = { showEmoji = true }) { Text("☺ Эмоджи") }
+                androidx.compose.material3.TextButton(onClick = { showStickers = true }) { Text("Стикеры") }
+            }
             Composer(
                 text = state.composerText,
                 canSend = state.canSend,
@@ -244,6 +264,8 @@ private fun MessageList(
     onReaction: (Message, String) -> Unit,
     onOpenAttachment: (Attachment) -> Unit,
     loadImage: suspend (Attachment) -> File?,
+    onReport: suspend (String,String) -> String,
+    onTranscribe: suspend (String) -> String,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -277,7 +299,7 @@ private fun MessageList(
                 horizontalAlignment = if (isOutgoing) Alignment.End else Alignment.Start,
             ) {
                 if (!message.isDeleted) {
-                    message.attachments.forEach { attachment ->
+                    message.attachments.filterNot { it.mimeType.startsWith("audio/") }.forEach { attachment ->
                         if (attachment.isImage) {
                             ImageAttachment(attachment, loadImage, onClick = { onOpenAttachment(attachment) })
                         } else {
@@ -290,10 +312,14 @@ private fun MessageList(
                 // Пузырь — для текста или подписи. Сообщение-картинка без
                 // подписи обходится без пустого пузыря, но время и статус
                 // доставки всё равно нужны — они показываются пузырём.
-                if (message.type == MessageType.VOICE) {
-                    message.attachments.forEach { attachment -> VoicePlayback(attachment.id.value, load = { loadImage(attachment) }) }
-                }
                 MessageBubble(
+                    mediaContent = {
+                        message.attachments.filter {it.mimeType.startsWith("audio/")}.forEach { attachment ->
+                            VoicePlayback(attachment.id.value,load={loadImage(attachment)},durationMs=attachment.durationMs,
+                                transcribe=if(message.syncStatus==SyncStatus.SYNCED) ({onTranscribe(attachment.id.value)}) else null)
+                            UploadState(attachment)
+                        }
+                    },
                     text = message.text,
                     isOutgoing = isOutgoing,
                     timeLabel = TimeFormatters.messageTime(message.createdAt),
@@ -306,6 +332,7 @@ private fun MessageList(
                     isEdited = message.isEdited,
                     isDeleted = message.isDeleted,
                     isPinned = message.isPinned,
+                    onReactionClick = { onReaction(message, it) },
                 )
 
                 if (message.canRetry) {
@@ -315,9 +342,23 @@ private fun MessageList(
                     )
                 }
                 if (!message.isDeleted && message.syncStatus == SyncStatus.SYNCED) {
+                    var showReport by remember(message.id) { mutableStateOf(false) }
+                    if(showReport) ReportDialog(onDismiss={showReport=false},onSend={reason -> onReport(message.senderId.value,reason)})
+                    var showReactions by remember(message.id) { mutableStateOf(false) }
+                    if (showReactions) EmojiPicker("Реакция", reactionEmojis, onPick = {
+                        onReaction(message, it); showReactions = false
+                    }, onDismiss = { showReactions = false })
                     Row {
                         listOf("👍", "❤️", "😂").forEach { emoji ->
                             androidx.compose.material3.TextButton(onClick = { onReaction(message, emoji) }) { Text(emoji) }
+                        }
+                        androidx.compose.material3.TextButton(onClick = { showReactions = true }) { Text("＋") }
+                        if(!isOutgoing) Box {
+                            var menu by remember { mutableStateOf(false) }
+                            androidx.compose.material3.TextButton(onClick={menu=true}) {Text("Ещё")}
+                            androidx.compose.material3.DropdownMenu(expanded=menu,onDismissRequest={menu=false}) {
+                                androidx.compose.material3.DropdownMenuItem(text={Text("Пожаловаться на пользователя")},onClick={menu=false;showReport=true})
+                            }
                         }
                     }
                 }

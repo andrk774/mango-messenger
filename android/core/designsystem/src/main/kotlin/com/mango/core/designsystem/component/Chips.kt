@@ -211,7 +211,7 @@ fun OfflineBanner(modifier: Modifier = Modifier) {
 }
 
 fun TaskStatus.label(): String = when (this) {
-    TaskStatus.TODO -> "К выполнению"
+    TaskStatus.TODO -> "Новая"
     TaskStatus.IN_PROGRESS -> "В работе"
     TaskStatus.REVIEW -> "На проверке"
     TaskStatus.DONE -> "Готово"

@@ -98,6 +98,8 @@ services:
       MANGO_SMTP_PASSWORD: ${MANGO_SMTP_PASSWORD:-}
       MANGO_MAIL_FROM: ${MANGO_MAIL_FROM:-noreply@mango.local}
       MANGO_JWT_SECRET: ${MANGO_JWT_SECRET:?нужно задать MANGO_JWT_SECRET в .env}
+      MANGO_ADMIN_ENCRYPTION_KEY: ${MANGO_ADMIN_ENCRYPTION_KEY:-}
+      MANGO_SPEECH_URL: http://speech:8090
       MANGO_STORAGE_DIR: /data/attachments
       # Ключ Firebase (см. README, «Push-уведомления»). Нет файла —
       # сервер работает, push пишутся в журнал.
@@ -121,6 +123,23 @@ services:
       - ../../secrets:/run/secrets/mango:ro
     restart: unless-stopped
 
+  speech:
+    build:
+      context: ../speech
+    environment:
+      MANGO_SPEECH_MODEL: ${MANGO_SPEECH_MODEL:-base}
+    volumes:
+      - speechmodels:/models
+    mem_limit: 2g
+    cpus: 4
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 180s
+      retries: 5
+    restart: unless-stopped
+
   # Вход из локальной сети по HTTPS (см. README, «Запуск в локальной сети»).
   # Единственный сервис, открытый не только на этом компьютере.
   caddy:
@@ -140,6 +159,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  speechmodels:
   pgdata:
   redisdata:
   attachments:

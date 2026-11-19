@@ -65,6 +65,7 @@ class OutboxProcessor @Inject constructor(
     private val conflicts: TaskConflictNotifier,
     private val time: TimeProvider,
     private val logger: Logger,
+    private val accountGuard: com.mango.core.data.session.AccountGuard,
     private val retryPolicy: RetryPolicy = RetryPolicy.Default,
 ) {
 
@@ -99,6 +100,15 @@ class OutboxProcessor @Inject constructor(
     }
 
     suspend fun runOnce(limit: Int = BATCH_SIZE): OutboxRunResult = runMutex.withLock {
+        // Очередь принадлежит владельцу базы. Без подтверждённой сессии
+        // того же пользователя ни одна операция не уходит и не теряет попыток.
+        accountGuard.withVerifiedOwner { runOnceVerified(limit) } ?: run {
+            logger.i(TAG, "очередь не обрабатывается: владелец сессии не подтверждён")
+            OutboxRunResult(0, 0, 0)
+        }
+    }
+
+    private suspend fun runOnceVerified(limit: Int): OutboxRunResult {
         val now = time.nowMillis()
 
         // Восстановление после обрыва: операции, оставшиеся в полёте,
@@ -132,6 +142,15 @@ class OutboxProcessor @Inject constructor(
 
                 is Outcome.Failure -> {
                     val error = outcome.error
+                    if (error == AppError.Unauthorized) {
+                        // Сервер не признал сессию даже после попытки обновления.
+                        // Вина не операции: она возвращается в очередь без
+                        // расхода попытки, а остаток порции не отправляется.
+                        // Следующий проход начнётся только с подтверждённой сессией.
+                        outboxDao.updateStatus(operation.id, OutboxStatus.PENDING, time.nowMillis())
+                        retries++
+                        break
+                    }
                     if (retryPolicy.shouldRetry(error, operation.attemptCount)) {
                         val delay = retryPolicy.effectiveDelayMillis(error, operation.attemptCount)
                         outboxDao.scheduleRetry(
@@ -228,7 +247,19 @@ class OutboxProcessor @Inject constructor(
 
     private suspend fun markRead(operation: OutboxOperationEntity): Outcome<AfterCommit> {
         val payload = decode<MarkReadPayload>(operation) ?: return malformed(operation)
-        return remote.markRead(payload.conversationId, payload.seq).map { NOTHING }
+        return remote.markRead(payload.conversationId, payload.seq).map {
+            AfterCommit {
+                // A confirmed read cursor also completes older failed read receipts.
+                // Never clear unrelated conversations or receipts beyond this cursor.
+                outboxDao.all().filter { it.opType == OpType.MARK_READ && it.status == OutboxStatus.FAILED }
+                    .forEach { stale ->
+                        val old = runCatching { OutboxJson.decodeFromString<MarkReadPayload>(stale.payloadJson) }.getOrNull()
+                        if (old != null && old.conversationId == payload.conversationId && old.seq <= payload.seq) {
+                            outboxDao.delete(stale.id)
+                        }
+                    }
+            }
+        }
     }
 
     // ──────────────────────────── вложения ────────────────────────────

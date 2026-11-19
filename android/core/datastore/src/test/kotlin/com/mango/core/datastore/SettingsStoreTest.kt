@@ -55,13 +55,19 @@ class SettingsStoreTest {
 
     private fun file(name: String) = temporaryFolder.root.resolve("$name.preferences_pb")
 
+    @Test fun `chat background survives reopening settings`() = runTest {
+        val target=file("background")
+        withSettings(target) {store,_->store.setChatBackground(ChatBackground.MINT)}
+        withSettings(target) {store,_->assertEquals(ChatBackground.MINT,store.settings.first().chatBackground)}
+    }
+
     @Test
     fun `defaults are safe for privacy`() = runTest {
         withSettings(file("defaults")) { store, _ ->
             val settings = store.settings.first()
 
             assertEquals(ThemeMode.SYSTEM, settings.themeMode)
-            assertTrue(settings.dynamicColorEnabled)
+            assertFalse(settings.dynamicColorEnabled)
             assertTrue(settings.messageNotificationsEnabled)
             assertTrue(settings.taskNotificationsEnabled)
             assertFalse(

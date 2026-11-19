@@ -65,9 +65,11 @@ class TaskSyncTest {
 
     private lateinit var server: MockWebServer
     private lateinit var database: MangoDatabase
+    private lateinit var session: TestSession
     private lateinit var applier: EventApplier
     private lateinit var processor: OutboxProcessor
     private lateinit var notifier: TaskConflictNotifier
+    private lateinit var engine: SyncEngine
 
     private val time = MutableTimeProvider(Instant.ofEpochMilli(1_700_000_000_000))
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -84,6 +86,8 @@ class TaskSyncTest {
             ApplicationProvider.getApplicationContext(),
             MangoDatabase::class.java,
         ).allowMainThreadQueries().build()
+        session = TestSession(database)
+        session.signIn(me)
 
         val retrofit = Retrofit.Builder()
             .baseUrl(server.url("/"))
@@ -92,6 +96,9 @@ class TaskSyncTest {
             .build()
 
         applier = EventApplier(database, json, NoOpLogger())
+        engine = SyncEngine(database,
+            com.mango.core.network.SyncRemoteDataSource(retrofit.create(com.mango.core.network.api.SyncApi::class.java)),
+            TasksRemoteDataSource(retrofit.create(TasksApi::class.java)), applier, NoOpLogger(), session.guard)
         notifier = TaskConflictNotifier()
         processor = OutboxProcessor(
             database = database,
@@ -105,6 +112,7 @@ class TaskSyncTest {
             conflicts = notifier,
             time = time,
             logger = NoOpLogger(),
+            accountGuard = session.guard,
             retryPolicy = RetryPolicy.Default,
         )
 
@@ -215,6 +223,35 @@ class TaskSyncTest {
     }
 
     // ─────────────────────── события журнала ───────────────────────
+
+    @Test
+    fun `assignment event shows another authors task in recipients mine list`() = runTest {
+        val assigned = serverTask(version = 2,
+            assignees = """[{"userId":"$me","username":"me","displayName":"Я"}]""")
+            .replace("\"createdBy\":\"$me\"", "\"createdBy\":\"another-user\"")
+        applier.applyBatch(listOf(taskEvent(1, "TASK_UPDATED", assigned)))
+        assertEquals(listOf(taskId), database.taskDao().observeMyTasks(me, false).first().map { it.id })
+        assertEquals(me, database.userDao().currentUserId())
+        val unassigned = serverTask(version = 3)
+            .replace("\"createdBy\":\"$me\"", "\"createdBy\":\"another-user\"")
+        applier.applyBatch(listOf(taskEvent(2, "TASK_UPDATED", unassigned)))
+        assertTrue(database.taskDao().observeMyTasks(me, false).first().isEmpty())
+    }
+
+    @Test
+    fun `joining a chat downloads tasks created before membership`() = runTest {
+        respond(200, """{"events":[{"id":1,"scope":"CONVERSATION","scopeId":"chat-1",
+          "type":"CONVERSATION_MEMBER_ADDED","payload":{"conversationId":"chat-1","members":[]},
+          "createdAt":"2026-11-12T10:00:00Z"}],"lastEventId":1,"hasMore":false}""")
+        respond(200, """{"items":[]}""")
+        val older = serverTask(version = 1).replace("\"createdBy\":\"$me\"",
+            "\"createdBy\":\"another-user\",\"conversationId\":\"chat-1\"")
+        respond(200, """{"items":[$older]}""")
+        assertTrue(engine.catchUp() is com.mango.core.common.Outcome.Success)
+        assertEquals(listOf(taskId), database.taskDao().observeTeamTasks(false).first().map { it.id })
+        assertTrue(database.taskDao().observeMyTasks(me, false).first().isEmpty())
+        assertEquals(3, server.requestCount)
+    }
 
     @Test
     fun `событие из журнала не откатывает неотправленную правку`() = runTest {

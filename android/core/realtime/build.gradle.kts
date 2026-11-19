@@ -18,6 +18,8 @@ dependencies {
     api(projects.core.common)
     implementation(projects.core.network)
     implementation(projects.core.sync)
+    // Допуск к базе владельца сессии (AccountGuard).
+    implementation(projects.core.data)
     implementation(projects.core.security)
 
     implementation(libs.okhttp)

@@ -48,6 +48,13 @@ class SmtpMailSender(
         },
     )
 
+    /** Checks transport/TLS/authentication without sending mail. */
+    suspend fun checkConnection() = withContext(dispatcher) {
+        session.getTransport("smtp").use { transport ->
+            transport.connect(config.host, config.port, config.username, config.password)
+        }
+    }
+
     override suspend fun send(to: String, subject: String, body: String) {
         withContext(dispatcher) {
             runCatching {

@@ -72,6 +72,10 @@ class AuthRemoteDataSource @Inject constructor(private val api: AuthApi) {
 
     suspend fun logout(): Outcome<Unit> = apiCall { api.logout() }.map { }
 
+    /** Профиль по токену кандидата; сохранённая сессия в запросе не участвует. */
+    suspend fun meAsCandidate(accessToken: String): Outcome<CurrentUserDto> =
+        apiCall { api.meAsCandidate("Bearer $accessToken", "1") }
+
     suspend fun forgotPassword(email: String): Outcome<Unit> =
         apiCall { api.forgotPassword(ForgotPasswordRequestDto(email)) }.map { }
 

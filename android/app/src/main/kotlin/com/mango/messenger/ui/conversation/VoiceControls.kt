@@ -19,6 +19,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import java.io.File
+import androidx.compose.material3.Slider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 
 @Composable
 internal fun VoiceComposer(onSend: suspend (android.net.Uri) -> Boolean) {
@@ -68,7 +74,7 @@ internal fun VoiceComposer(onSend: suspend (android.net.Uri) -> Boolean) {
     Column {
         error?.let { Text(it) }
         if (recorder != null) Text("Идёт запись · максимум 2 минуты")
-        Row {
+        Column {
             if (draft == null) TextButton(onClick = {
                 if (recorder != null) finish()
                 else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) start()
@@ -90,37 +96,63 @@ internal fun VoiceComposer(onSend: suspend (android.net.Uri) -> Boolean) {
 }
 
 @Composable
-internal fun VoicePlayback(key: String, load: suspend () -> File?) {
-    val scope = rememberCoroutineScope()
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var player by remember(key) { mutableStateOf<MediaPlayer?>(null) }
-    var loading by remember(key) { mutableStateOf(false) }
-    var error by remember(key) { mutableStateOf(false) }
-    var alive by remember(key) { mutableStateOf(true) }
-    fun stop() { player?.release(); player = null }
-    DisposableEffect(key, lifecycle) {
-        alive = true
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) stop() }
+internal fun VoicePlayback(key:String,load:suspend()->File?,transcribe:(suspend()->String)?=null,durationMs:Long?=null) {
+    val scope=rememberCoroutineScope()
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
+    var player by remember(key) {mutableStateOf<MediaPlayer?>(null)}
+    var loading by remember(key) {mutableStateOf(false)}
+    var playing by remember(key) {mutableStateOf(false)}
+    var duration by remember(key) {mutableIntStateOf((durationMs?:0).coerceIn(0,Int.MAX_VALUE.toLong()).toInt())}
+    var position by remember(key) {mutableIntStateOf(0)}
+    var error by remember(key) {mutableStateOf<String?>(null)}
+    var alive by remember(key) {mutableStateOf(true)}
+    var text by remember(key) {mutableStateOf<String?>(null)}
+    var recognizing by remember(key) {mutableStateOf(false)}
+    fun release(){player?.release();player=null;playing=false;loading=false;position=0}
+    DisposableEffect(key,lifecycle) {
+        alive=true
+        val observer=LifecycleEventObserver {_,event->if(event==Lifecycle.Event.ON_STOP){player?.let {if(playing)it.pause()};playing=false}}
         lifecycle.addObserver(observer)
-        onDispose { alive = false; lifecycle.removeObserver(observer); stop() }
+        onDispose {alive=false;lifecycle.removeObserver(observer);release()}
     }
-    TextButton(enabled = !loading, onClick = {
-        if (player != null) stop() else scope.launch {
-            loading = true
-            error = false
-            try {
-                val file = load()
-                if (!alive) return@launch
-                if (file == null) { error = true; return@launch }
-                val current = MediaPlayer()
-                player = current
-                current.setDataSource(file.absolutePath)
-                current.setOnCompletionListener { stop() }
-                current.setOnErrorListener { _, _, _ -> error = true; stop(); true }
-                current.setOnPreparedListener { if (alive && player === it) it.start() }
-                current.prepareAsync()
-            } catch (_: Exception) { error = true; stop() }
-            finally { loading = false }
+    LaunchedEffect(key,playing) {while(playing){position=player?.currentPosition?:0;delay(200)}}
+    Column(Modifier.widthIn(min=230.dp,max=290.dp)) {
+        Text("Голосовое сообщение",style=MaterialTheme.typography.labelLarge)
+        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+            TextButton(enabled=!loading,onClick={
+                val current=player
+                if(current!=null){if(playing)current.pause() else current.start();playing=!playing}
+                else scope.launch {
+                    loading=true;error=null
+                    try {
+                        val file=load() ?: throw IllegalStateException("Не удалось загрузить запись")
+                        if(!alive)return@launch
+                        val created=MediaPlayer();player=created
+                        created.setDataSource(file.absolutePath)
+                        created.setOnPreparedListener {if(alive&&player===it){duration=it.duration;loading=false;playing=true;it.start()}}
+                        created.setOnCompletionListener {playing=false;position=0;it.seekTo(0)}
+                        created.setOnErrorListener {_,_,_->error="Не удалось воспроизвести. Попробуйте снова";release();true}
+                        created.prepareAsync()
+                    }catch(e:CancellationException){release();throw e}
+                    catch(_:Exception){release();error="Не удалось загрузить аудио"}
+                }
+            }) {Text(if(loading) "Загрузка…" else if(playing) "Пауза" else "Слушать")}
+            Text("${voiceTime(position)} / ${if(duration>0)voiceTime(duration) else "—:—"}",style=MaterialTheme.typography.labelMedium)
         }
-    }) { Text(when { loading -> "Загрузка…"; player != null -> "Стоп"; error -> "Повторить аудио"; else -> "▶ Слушать" }) }
+        Slider(value=position.toFloat().coerceIn(0f,duration.coerceAtLeast(1).toFloat()),
+            onValueChange={position=it.toInt();player?.seekTo(position)},valueRange=0f..duration.coerceAtLeast(1).toFloat(),enabled=player!=null&&!loading)
+        if(transcribe!=null) TextButton(enabled=!recognizing,onClick={scope.launch {
+            recognizing=true;error=null
+            try {text=transcribe().ifBlank {"Речь не обнаружена"}}
+            catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Расшифровка недоступна"}finally{recognizing=false}
+        }}) {Text(if(recognizing) "Распознаём речь…" else if(text==null) "Расшифровать" else "Обновить расшифровку")}
+        text?.let {SelectionContainer {Text(it,style=MaterialTheme.typography.bodyMedium)};Text("Автоматическая расшифровка может содержать ошибки",style=MaterialTheme.typography.labelSmall)}
+        error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
+    }
 }
+
+internal fun voiceTime(milliseconds:Int):String {
+    val seconds=milliseconds.coerceAtLeast(0)/1000
+    return "%d:%02d".format(java.util.Locale.ROOT,seconds/60,seconds%60)
+}
+

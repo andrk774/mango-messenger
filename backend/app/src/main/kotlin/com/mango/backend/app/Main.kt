@@ -1,5 +1,7 @@
 package com.mango.backend.app
 
+import com.mango.backend.common.accountSessionAllowed
+
 import com.mango.backend.notifications.FcmPushProvider
 import com.mango.backend.notifications.LoggingPushProvider
 import com.mango.backend.notifications.PushProvider
@@ -186,6 +188,7 @@ fun Application.mangoModule(
     val tokenService = TokenService(config.jwt, time)
     val passwordHasher = PasswordHasher(config.password)
     val authRepository = AuthRepository()
+    val adminService = AdminService(database, config, time)
 
     // Журнал событий — основа синхронизации. Рассылка в реальном времени
     // подключается отдельно: её отсутствие не теряет события, клиент
@@ -249,7 +252,7 @@ fun Application.mangoModule(
         tokens = tokenService,
         ids = ids,
         time = time,
-        mail = mailSender,
+        mail = adminService.mailSender(mailSender),
         revocations = revocations,
         accessTokenTtl = config.jwt.accessTokenTtl,
     )
@@ -260,6 +263,7 @@ fun Application.mangoModule(
         header("X-Content-Type-Options", "nosniff")
         header("X-Frame-Options", "DENY")
         header("Referrer-Policy", "no-referrer")
+        header("Cache-Control", "no-store")
     }
 
     install(CallId) {
@@ -315,6 +319,8 @@ fun Application.mangoModule(
                     // работать до конца своего срока.
                     revocations.isRevoked(UUID.fromString(sessionId)) -> null
 
+                    !database.readOnly { it.accountSessionAllowed(UUID.fromString(subject), UUID.fromString(sessionId)) } -> null
+
                     else -> JWTPrincipal(credential.payload)
                 }
             }
@@ -338,9 +344,14 @@ fun Application.mangoModule(
         )
         syncRoutes(syncService)
         messagingRoutes(conversationService, messageService)
-        realtimeRoutes(hub, tokenService, syncService, wsAuthTimeoutMillis)
+        realtimeRoutes(hub, tokenService, syncService, wsAuthTimeoutMillis) { claims ->
+            !revocations.isRevoked(claims.sessionId) && database.readOnly { it.accountSessionAllowed(claims.userId, claims.sessionId) }
+        }
+        adminRoutes(adminService)
+        webRoutes(database)
         tasksRoutes(taskService)
         attachmentsRoutes(attachmentService)
+        transcriptRoutes(TranscriptService(database,attachmentService))
         notificationsRoutes(pushService)
     }
 }

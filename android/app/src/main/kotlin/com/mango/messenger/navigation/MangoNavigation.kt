@@ -64,18 +64,6 @@ val topLevelDestinations = listOf(
         unselectedIcon = Icons.Outlined.Checklist,
     ),
     TopLevelDestination(
-        route = Routes.CONTACTS,
-        label = "Контакты",
-        selectedIcon = Icons.Filled.People,
-        unselectedIcon = Icons.Outlined.People,
-    ),
-    TopLevelDestination(
-        route = Routes.NOTIFICATIONS,
-        label = "Уведомления",
-        selectedIcon = Icons.Filled.Notifications,
-        unselectedIcon = Icons.Outlined.Notifications,
-    ),
-    TopLevelDestination(
         route = Routes.SETTINGS,
         label = "Настройки",
         selectedIcon = Icons.Filled.Settings,

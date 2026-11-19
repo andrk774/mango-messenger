@@ -27,3 +27,13 @@ Thumbs.db
 # Logs & reports
 *.log
 /reports/
+
+# Local artifacts, credentials and portable signing material
+/artifacts/
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.key
+*.dpapi
+recovery-password.txt

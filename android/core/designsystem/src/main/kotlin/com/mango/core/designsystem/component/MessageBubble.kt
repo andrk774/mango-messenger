@@ -61,6 +61,7 @@ fun MessageBubble(
     isPinned: Boolean = false,
     isGroupedWithPrevious: Boolean = false,
     onReactionClick: ((String) -> Unit)? = null,
+    mediaContent: (@Composable () -> Unit)? = null,
 ) {
     val semantic = MangoTheme.semanticColors
     val bubbleColor = if (isOutgoing) semantic.outgoingBubble else semantic.incomingBubble
@@ -119,6 +120,7 @@ fun MessageBubble(
                 Spacer(Modifier.height(6.dp))
             }
 
+            if (!isDeleted) mediaContent?.invoke()
             if (isDeleted) {
                 Text(
                     text = "Сообщение удалено",
@@ -127,11 +129,7 @@ fun MessageBubble(
                     color = contentColor.copy(alpha = 0.6f),
                 )
             } else if (!text.isNullOrEmpty()) {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = contentColor,
-                )
+                LinkedMessageText(text = text, color = contentColor)
             }
 
             if (reactions.isNotEmpty()) {

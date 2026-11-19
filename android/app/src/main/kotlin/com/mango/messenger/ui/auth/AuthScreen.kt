@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -69,11 +70,14 @@ fun AuthScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(28.dp))
+            com.mango.core.designsystem.component.MangoArtwork()
+            Spacer(Modifier.height(16.dp))
 
             Text(
                 text = "Mango",
-                style = MaterialTheme.typography.displaySmall,
+                style = MaterialTheme.typography.displayMedium,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.height(8.dp))
@@ -87,7 +91,9 @@ fun AuthScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(24.dp))
+            Surface(shape=androidx.compose.foundation.shape.RoundedCornerShape(28.dp),color=MaterialTheme.colorScheme.surface) {
+            Column(Modifier.padding(20.dp),horizontalAlignment=Alignment.CenterHorizontally) {
 
             when (state.step) {
                 AuthStep.LOGIN -> LoginForm(state, viewModel)
@@ -95,7 +101,8 @@ fun AuthScreen(
                 AuthStep.VERIFY_EMAIL -> VerifyForm(state, viewModel)
             }
 
-            Spacer(Modifier.height(48.dp))
+            } }
+            Spacer(Modifier.height(28.dp))
         }
     }
 }

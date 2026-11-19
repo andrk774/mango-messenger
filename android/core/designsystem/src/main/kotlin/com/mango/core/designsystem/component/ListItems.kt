@@ -81,8 +81,8 @@ fun ConversationListItem(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .heightIn(min = 72.dp)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .heightIn(min = 88.dp)
+            .padding(horizontal = 20.dp, vertical = 14.dp)
             .semantics(mergeDescendants = true) { contentDescription = accessibilityLabel },
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -91,7 +91,7 @@ fun ConversationListItem(
             imageUrl = avatarUrl,
             seed = avatarSeed,
             presence = presence,
-            size = 52.dp,
+            size = 58.dp,
         )
         Spacer(Modifier.width(12.dp))
 
@@ -207,7 +207,7 @@ fun TaskCard(
         ),
         shape = MaterialTheme.shapes.medium,
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 Text(
                     text = title,

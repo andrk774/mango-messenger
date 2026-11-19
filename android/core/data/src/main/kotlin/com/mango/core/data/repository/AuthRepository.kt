@@ -7,14 +7,18 @@ import com.mango.core.common.DispatcherProvider
 import com.mango.core.common.Logger
 import com.mango.core.common.Outcome
 import com.mango.core.common.Redact
-import com.mango.core.common.map
+import com.mango.core.data.session.AccountGuard
 import com.mango.core.database.MangoDatabase
 import com.mango.core.database.entity.UserEntity
 import com.mango.core.model.PresenceStatus
 import com.mango.core.network.AuthRemoteDataSource
 import com.mango.core.network.auth.SessionManager
+import com.mango.core.network.dto.CurrentUserDto
 import com.mango.core.security.AuthTokens
+import com.mango.core.security.JwtClaims
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -27,7 +31,11 @@ import javax.inject.Singleton
  */
 interface AuthRepository {
 
-    /** Есть ли действующая сессия. Источник состояния для навигации. */
+    /**
+     * Есть ли действующая сессия, владелец которой совпадает с владельцем
+     * локальной базы. Источник состояния для навигации: пока владелец
+     * не подтверждён, интерфейс не показывает локальные данные.
+     */
     val isAuthenticated: Flow<Boolean>
 
     suspend fun restoreSession(): Boolean
@@ -41,7 +49,7 @@ interface AuthRepository {
 
     suspend fun verifyEmail(email: String, token: String): Outcome<Unit>
 
-    suspend fun login(email: String, password: String): Outcome<Unit>
+    suspend fun login(email: String, password: String): Outcome<LoginResult>
 
     suspend fun logout(): Outcome<Unit>
 
@@ -51,6 +59,18 @@ interface AuthRepository {
     suspend fun requestPasswordReset(email: String): Outcome<Unit>
 }
 
+/** Исход успешной проверки учётных данных. */
+sealed interface LoginResult {
+    /** Сессия активирована: база принадлежит этому пользователю или была пустой. */
+    data object SignedIn : LoginResult
+
+    /**
+     * В базе данные другого аккаунта. Сессия НЕ активирована: токены не
+     * сохранены, база и её очередь не тронуты. Решение принимает пользователь.
+     */
+    data object AccountSwitchRequired : LoginResult
+}
+
 @Singleton
 class DefaultAuthRepository @Inject constructor(
     private val remote: AuthRemoteDataSource,
@@ -58,11 +78,15 @@ class DefaultAuthRepository @Inject constructor(
     private val database: MangoDatabase,
     private val dispatchers: DispatcherProvider,
     private val logger: Logger,
+    private val accountGuard: AccountGuard,
 ) : AuthRepository {
 
     private val userDao = database.userDao()
 
-    override val isAuthenticated: Flow<Boolean> = sessionManager.isAuthenticated
+    override val isAuthenticated: Flow<Boolean> =
+        combine(sessionManager.sessionUserId, userDao.observeCurrentUser()) { sessionUser, owner ->
+            sessionUser != null && sessionUser == owner?.id
+        }.distinctUntilChanged()
 
     override suspend fun restoreSession(): Boolean = withContext(dispatchers.io) {
         sessionManager.restore()
@@ -83,55 +107,85 @@ class DefaultAuthRepository @Inject constructor(
     /**
      * Вход.
      *
-     * После успеха сохраняются токены и профиль. Профиль нужен сразу:
-     * без записи «это я» список чатов не сможет отличить свои сообщения
-     * от чужих и посчитает непрочитанными собственные.
+     * Порядок защищает данные прежнего аккаунта:
+     *  1. токены кандидата живут только в памяти этого вызова;
+     *  2. профиль запрашивается с явно переданным токеном кандидата;
+     *  3. профиль сверяется с владельцем токена (`sub`);
+     *  4. под эксклюзивным допуском сверяется владелец базы;
+     *  5. только при совпадении (или пустой базе) записывается «это я»
+     *     и сохраняются токены — с этого момента сессия активна.
+     *
+     * Любая ошибка до шага 5 не оставляет следов: токены не сохранены,
+     * база и её очередь не тронуты.
      */
-    override suspend fun login(email: String, password: String): Outcome<Unit> =
+    override suspend fun login(email: String, password: String): Outcome<LoginResult> =
         withContext(dispatchers.io) {
-            val tokens = remote.login(
-                email = email,
-                password = password,
-                deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
-                appVersion = APP_VERSION,
+            val pair = when (
+                val response = remote.login(
+                    email = email,
+                    password = password,
+                    deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
+                    appVersion = APP_VERSION,
+                )
+            ) {
+                is Outcome.Failure -> return@withContext response
+                is Outcome.Success -> response.value
+            }
+            val candidate = AuthTokens(
+                accessToken = pair.accessToken,
+                refreshToken = pair.refreshToken,
+                accessExpiresAtMillis = pair.accessExpiresAt.toEpochMilli(),
             )
 
-            when (tokens) {
-                is Outcome.Failure -> tokens
-                is Outcome.Success -> {
-                    sessionManager.save(
-                        AuthTokens(
-                            accessToken = tokens.value.accessToken,
-                            refreshToken = tokens.value.refreshToken,
-                            accessExpiresAtMillis = tokens.value.accessExpiresAt.toEpochMilli(),
-                        ),
-                    )
-                    loadCurrentUser()
+            val subject = JwtClaims.subject(candidate.accessToken) ?: run {
+                logger.w(TAG, "сервер выдал токен без владельца, вход отклонён")
+                return@withContext Outcome.Failure(AppError.Unauthorized)
+            }
+
+            val profile = when (val me = remote.meAsCandidate(candidate.accessToken)) {
+                is Outcome.Failure -> return@withContext me
+                is Outcome.Success -> me.value
+            }
+            if (profile.id != subject) {
+                logger.w(TAG, "профиль не совпадает с владельцем токена, вход отклонён")
+                return@withContext Outcome.Failure(AppError.Unauthorized)
+            }
+
+            // Проверка владельца и активация — одним эксклюзивным шагом:
+            // фоновый проход не начнётся между ними и не застанет
+            // промежуточного состояния.
+            accountGuard.exclusive {
+                val owner = userDao.currentUserId()
+                if (owner != null && owner != profile.id) {
+                    logger.i(TAG, "на устройстве данные другого аккаунта, требуется решение пользователя")
+                    return@exclusive Outcome.Success(LoginResult.AccountSwitchRequired)
                 }
+                adoptAsOwner(profile)
+                sessionManager.save(candidate)
+                Outcome.Success(LoginResult.SignedIn)
             }
         }
 
-    private suspend fun loadCurrentUser(): Outcome<Unit> =
-        remote.me().map { profile ->
-            database.withTransaction {
-                // Признак «это я» должен быть ровно у одной записи:
-                // при смене аккаунта старая отметка обязана сняться.
-                userDao.clearCurrentUserFlag()
-                userDao.upsert(
-                    UserEntity(
-                        id = profile.id,
-                        username = profile.username,
-                        displayName = profile.displayName,
-                        avatarUrl = profile.avatarUrl,
-                        bio = profile.bio,
-                        presence = PresenceStatus.ONLINE,
-                        lastSeenAt = System.currentTimeMillis(),
-                        isMe = true,
-                        updatedAt = System.currentTimeMillis(),
-                    ),
-                )
-            }
+    private suspend fun adoptAsOwner(profile: CurrentUserDto) {
+        database.withTransaction {
+            // Признак «это я» должен быть ровно у одной записи. Сюда
+            // попадает только владелец этой же базы или пустая база.
+            userDao.clearCurrentUserFlag()
+            userDao.upsert(
+                UserEntity(
+                    id = profile.id,
+                    username = profile.username,
+                    displayName = profile.displayName,
+                    avatarUrl = profile.avatarUrl,
+                    bio = profile.bio,
+                    presence = PresenceStatus.ONLINE,
+                    lastSeenAt = System.currentTimeMillis(),
+                    isMe = true,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
         }
+    }
 
     /**
      * Выход.
@@ -158,9 +212,13 @@ class DefaultAuthRepository @Inject constructor(
             }
         }
 
-        sessionManager.clear()
-        runCatching { database.clearAllTables() }
-            .onFailure { logger.e(TAG, "не удалось очистить локальные данные", it) }
+        // Эксклюзивно: начатый фоновый проход завершается до очистки
+        // и не пишет в базу после неё.
+        accountGuard.exclusive {
+            sessionManager.clear()
+            runCatching { database.clearAllTables() }
+                .onFailure { logger.e(TAG, "не удалось очистить локальные данные", it) }
+        }
 
         Outcome.Success(Unit)
     }

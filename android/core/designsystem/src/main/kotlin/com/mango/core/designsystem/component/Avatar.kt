@@ -71,7 +71,11 @@ fun MangoAvatar(
                 AvatarInitials(initials, size)
             } else {
                 SubcomposeAsyncImage(
-                    model = imageUrl,
+                    model = androidx.compose.runtime.remember(imageUrl) {
+                        if(imageUrl.startsWith("data:image/jpeg;base64,"))
+                            runCatching { android.util.Base64.decode(imageUrl.substringAfter(','),android.util.Base64.DEFAULT) }.getOrNull()
+                        else imageUrl
+                    },
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.size(size).clip(CircleShape),

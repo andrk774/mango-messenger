@@ -13,11 +13,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Пара токенов и срок действия access token. */
+/**
+ * Пара токенов и срок действия access token.
+ *
+ * [userId] — владелец сессии, взятый из выданного сервером токена
+ * (`sub`). По нему фоновые операции сверяются с владельцем локальной
+ * базы: операции одного аккаунта не должны уйти под токеном другого.
+ * `null` означает, что владелец не подтверждён, и фоновая работа
+ * запрещена.
+ */
 data class AuthTokens(
     val accessToken: String,
     val refreshToken: String,
     val accessExpiresAtMillis: Long,
+    val userId: String? = null,
 ) {
     /**
      * Запас в 30 секунд: если токен истечёт во время полёта запроса,
@@ -65,11 +74,15 @@ class EncryptedTokenStore @Inject constructor(
             tokens.accessToken,
             tokens.refreshToken,
             tokens.accessExpiresAtMillis.toString(),
+            tokens.userId.orEmpty(),
         ).joinToString(SEPARATOR)
 
         val encrypted = crypto.encrypt(encoded)
+        // Старый формат удаляется той же записью, что и пишется новый:
+        // при сбое между ними осталась бы прежняя сессия без владельца.
         preferences.edit()
-            .putString(KEY_PAYLOAD, Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            .putString(KEY_PAYLOAD_V2, Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            .remove(KEY_PAYLOAD_V1)
             .commit() // commit, не apply: потеря токенов при падении недопустима
         _tokens.value = tokens
     }
@@ -77,7 +90,36 @@ class EncryptedTokenStore @Inject constructor(
     override suspend fun load(): AuthTokens? {
         _tokens.value?.let { return it }
 
-        val stored = preferences.getString(KEY_PAYLOAD, null) ?: return null
+        preferences.getString(KEY_PAYLOAD_V2, null)?.let { stored ->
+            val parts = decryptParts(stored) ?: return null
+            if (parts.size != 4) return corrupted()
+            val expiresAt = parts[2].toLongOrNull() ?: return corrupted()
+            return AuthTokens(
+                accessToken = parts[0],
+                refreshToken = parts[1],
+                accessExpiresAtMillis = expiresAt,
+                userId = parts[3].ifEmpty { null },
+            ).also { _tokens.value = it }
+        }
+
+        // Миграция tokens_v1: владелец берётся из выданного сервером токена.
+        // Если его не извлечь, сессия остаётся без владельца — фоновая
+        // работа будет запрещена до повторного входа, но данные не теряются.
+        val legacy = preferences.getString(KEY_PAYLOAD_V1, null) ?: return null
+        val parts = decryptParts(legacy) ?: return null
+        if (parts.size != 3) return corrupted()
+        val expiresAt = parts[2].toLongOrNull() ?: return corrupted()
+        val tokens = AuthTokens(
+            accessToken = parts[0],
+            refreshToken = parts[1],
+            accessExpiresAtMillis = expiresAt,
+            userId = JwtClaims.subject(parts[0]),
+        )
+        if (tokens.userId != null) save(tokens) else _tokens.value = tokens
+        return tokens
+    }
+
+    private fun decryptParts(stored: String): List<String>? {
         val decrypted = runCatching { Base64.decode(stored, Base64.NO_WRAP) }
             .getOrNull()
             ?.let(crypto::decrypt)
@@ -86,36 +128,28 @@ class EncryptedTokenStore @Inject constructor(
             // Расшифровать не удалось: ключ Keystore мог быть сброшен
             // (сброс блокировки экрана, восстановление из бэкапа).
             // Единственный корректный выход — считать сессию потерянной.
-            clear()
+            clearStored()
             return null
         }
-
-        val parts = decrypted.split(SEPARATOR)
-        if (parts.size != 3) {
-            clear()
-            return null
-        }
-
-        val expiresAt = parts[2].toLongOrNull() ?: run {
-            clear()
-            return null
-        }
-
-        return AuthTokens(
-            accessToken = parts[0],
-            refreshToken = parts[1],
-            accessExpiresAtMillis = expiresAt,
-        ).also { _tokens.value = it }
+        return decrypted.split(SEPARATOR)
     }
 
-    override suspend fun clear() {
-        preferences.edit().remove(KEY_PAYLOAD).commit()
+    private fun corrupted(): AuthTokens? {
+        clearStored()
+        return null
+    }
+
+    private fun clearStored() {
+        preferences.edit().remove(KEY_PAYLOAD_V2).remove(KEY_PAYLOAD_V1).commit()
         _tokens.value = null
     }
 
+    override suspend fun clear() = clearStored()
+
     private companion object {
         const val PREFS_NAME = "mango_secure_tokens"
-        const val KEY_PAYLOAD = "tokens_v1"
+        const val KEY_PAYLOAD_V1 = "tokens_v1"
+        const val KEY_PAYLOAD_V2 = "tokens_v2"
 
         /** Символ, который не может встретиться в base64url-токене. */
         const val SEPARATOR = "\u0000"

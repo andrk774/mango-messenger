@@ -229,7 +229,7 @@ class MessageService(
     }
 
     suspend fun react(userId: UUID, messageId: UUID, request: ReactionRequest): MessageDto {
-        validate { check(request.emoji in setOf("👍", "❤️", "😂", "😮", "😢", "🙏"), "emoji", "Недопустимая реакция") }
+        validate { check(request.emoji in setOf("👍", "👎", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉", "👏", "😍", "🥰", "😊", "😁", "😎", "🤔", "😅", "😭", "😡", "🤯", "💯", "✅", "💪", "🤝", "👀", "🚀", "⭐", "💔", "🤗", "🫡"), "emoji", "Недопустимая реакция") }
         val (message, events) = database.transaction { connection ->
             val existing = repository.messageById(connection, messageId) ?: throw AppException.NotFound("Сообщение")
             repository.membership(connection, existing.conversationId, userId) ?: throw AppException.Forbidden("Чат недоступен")

@@ -115,12 +115,24 @@ class AuthViewModel @Inject constructor(
         val state = _uiState.value
         busy {
             when (val result = authRepository.login(state.email.trim(), state.password)) {
-                is Outcome.Success -> {
-                    // Первичная загрузка до перехода на список чатов:
-                    // иначе пользователь увидит пустой экран и решит,
-                    // что переписок нет.
-                    syncEngine.bootstrap()
-                    _events.emit(AuthEvent.Authenticated)
+                is Outcome.Success -> when (result.value) {
+                    com.mango.core.data.repository.LoginResult.SignedIn -> {
+                        // Первичная загрузка до перехода на список чатов:
+                        // иначе пользователь увидит пустой экран и решит,
+                        // что переписок нет.
+                        syncEngine.bootstrap()
+                        _events.emit(AuthEvent.Authenticated)
+                    }
+
+                    // Сессия не активирована, данные прежнего аккаунта не тронуты.
+                    // Выбор действия добавляется на этапе A3.
+                    com.mango.core.data.repository.LoginResult.AccountSwitchRequired ->
+                        _events.emit(
+                            AuthEvent.Message(
+                                "На устройстве сохранены данные другого аккаунта. " +
+                                    "Войдите в прежний аккаунт, чтобы отправить их.",
+                            ),
+                        )
                 }
 
                 is Outcome.Failure -> showError(result)

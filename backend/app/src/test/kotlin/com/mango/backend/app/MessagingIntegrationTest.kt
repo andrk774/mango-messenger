@@ -67,6 +67,14 @@ class MessagingIntegrationTest : IntegrationTestBase() {
         assertEquals(client.me(boris).id, repeated.reactions.single().userId)
         val removed: MessageDto = react(boris, false).body()
         assertTrue(removed.reactions.isEmpty())
+        for (emoji in listOf("🔥", "🎉", "🤝", "🫡")) {
+            val expanded: MessageDto = client.put("/v1/messages/${message.id}/reactions") {
+                bearerAuth(boris.accessToken)
+                contentType(ContentType.Application.Json)
+                setBody(com.mango.backend.messaging.ReactionRequest(emoji, true))
+            }.body()
+            assertTrue(expanded.reactions.any { it.emoji == emoji })
+        }
         client.delete("/v1/messages/${message.id}") { bearerAuth(anna.accessToken) }
         assertEquals(HttpStatusCode.Conflict, react(boris, true).status)
     }

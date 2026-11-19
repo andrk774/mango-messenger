@@ -73,10 +73,10 @@ internal val NeutralVariant80 = Color(0xFFD6C3B4)
 internal val NeutralVariant90 = Color(0xFFF2E0D0)
 
 val MangoLightColorScheme = lightColorScheme(
-    primary = Mango40,
+    primary = Color(0xFF1766D4),
     onPrimary = Color.White,
-    primaryContainer = Mango90,
-    onPrimaryContainer = Mango10,
+    primaryContainer = Color(0xFFE4EFFF),
+    onPrimaryContainer = Color(0xFF163A68),
     inversePrimary = Mango80,
 
     secondary = Teal40,
@@ -94,24 +94,24 @@ val MangoLightColorScheme = lightColorScheme(
     errorContainer = Red90,
     onErrorContainer = Red10,
 
-    background = Neutral98,
+    background = Color.White,
     onBackground = Neutral10,
-    surface = Neutral98,
-    onSurface = Neutral10,
-    surfaceVariant = NeutralVariant90,
-    onSurfaceVariant = NeutralVariant30,
-    surfaceTint = Mango40,
+    surface = Color.White,
+    onSurface = Color(0xFF192535),
+    surfaceVariant = Color(0xFFEEF2F7),
+    onSurfaceVariant = Color(0xFF596678),
+    surfaceTint = Color(0xFF1766D4),
 
     surfaceDim = Neutral87,
     surfaceBright = Neutral98,
     surfaceContainerLowest = Color.White,
-    surfaceContainerLow = Neutral96,
-    surfaceContainer = Neutral94,
-    surfaceContainerHigh = Neutral92,
-    surfaceContainerHighest = Neutral90,
+    surfaceContainerLow = Color.White,
+    surfaceContainer = Color(0xFFF1F4F9),
+    surfaceContainerHigh = Color(0xFFE9EEF6),
+    surfaceContainerHighest = Color(0xFFE2E9F2),
 
     outline = NeutralVariant50,
-    outlineVariant = NeutralVariant80,
+    outlineVariant = Color(0xFFDCE3ED),
     scrim = Color.Black,
 
     inverseSurface = Neutral20,
@@ -195,9 +195,9 @@ data class MangoSemanticColors(
 )
 
 internal val LightSemanticColors = MangoSemanticColors(
-    outgoingBubble = Mango90,
-    onOutgoingBubble = Mango10,
-    incomingBubble = Neutral92,
+    outgoingBubble = Color(0xFFE4EFFF),
+    onOutgoingBubble = Color(0xFF163A68),
+    incomingBubble = Color.White,
     onIncomingBubble = Neutral10,
     online = Color(0xFF1B873B),
     away = Color(0xFFB36500),

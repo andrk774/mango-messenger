@@ -30,9 +30,16 @@ class SyncWorker @AssistedInject constructor(
     private val outboxProcessor: OutboxProcessor,
     private val syncEngine: SyncEngine,
     private val logger: Logger,
+    private val accountGuard: com.mango.core.data.session.AccountGuard,
 ) : CoroutineWorker(context, parameters) {
 
     override suspend fun doWork(): Result {
+        // Без подтверждённого владельца работы нет: повтор по расписанию
+        // лишь копил бы попытки. Синхронизацию снова поставит вход.
+        if (accountGuard.verifiedOwner() == null) {
+            logger.i(TAG, "синхронизация пропущена: владелец сессии не подтверждён")
+            return Result.success()
+        }
         return runCatching {
             // Сначала отправка: изменения пользователя важнее догрузки
             // чужих. Кроме того, отправленное сразу вернётся событием,

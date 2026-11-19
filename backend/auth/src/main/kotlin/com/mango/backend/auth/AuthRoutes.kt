@@ -4,6 +4,7 @@ import com.mango.backend.common.AppException
 import com.mango.backend.common.RateLimiter
 import com.mango.backend.common.RateLimits
 import com.mango.backend.common.Database
+import com.mango.backend.common.queryOne
 import com.mango.backend.common.toIpLiteralOrNull
 import com.mango.backend.common.toUuidOrNull
 import io.ktor.http.HttpHeaders
@@ -20,6 +21,7 @@ import io.ktor.server.routing.RoutingContext
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.route
 import java.util.UUID
 
@@ -82,6 +84,10 @@ fun Route.authRoutes(
     route("/v1/auth") {
 
         post("/register") {
+            val enabled = database.readOnly { connection ->
+                connection.queryOne("SELECT registration_open FROM server_settings WHERE id=1") { it.getBoolean(1) } ?: true
+            }
+            if (!enabled) throw AppException.Forbidden("Регистрация временно закрыта")
             enforceLimit(
                 limiter = rateLimiter,
                 key = "register:${call.clientIp() ?: "unknown"}",
@@ -213,6 +219,13 @@ fun Route.authRoutes(
 
     route("/v1/users") {
         authenticate(JWT_AUTH) {
+            patch("/me") {
+                val caller = callerIdentity()
+                service.updateProfile(caller.userId, call.receive<ProfileUpdate>())
+                val user = database.readOnly { repository.findUserById(it, caller.userId) }
+                    ?: throw AppException.NotFound("Пользователь")
+                call.respond(user.toResponse())
+            }
             get("/me") {
                 val caller = callerIdentity()
                 val user = database.readOnly { repository.findUserById(it, caller.userId) }
@@ -245,3 +258,6 @@ internal fun io.ktor.server.application.ApplicationCall.clientIp(): String? {
 }
 
 const val JWT_AUTH = "jwt"
+
+@kotlinx.serialization.Serializable
+data class ProfileUpdate(val displayName: String, val username: String, val bio: String = "")
