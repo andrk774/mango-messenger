@@ -190,6 +190,25 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
         if(c.update("UPDATE user_reports SET status=?,resolution=?,updated_by=?,updated_at=now() WHERE id=?",status,note,actor,id)==0) throw AppException.NotFound("Жалоба")
         audit(c,actor,"REPORT",id.toString(),"$status: $note")
     }
+    suspend fun kubernetesSettings(actor:UUID):JsonObject=db.readOnly { c ->
+        requireAdmin(c,actor)
+        kotlinx.serialization.json.Json.parseToJsonElement(c.queryOne("SELECT kubernetes_config FROM server_settings WHERE id=1") { it.getString(1) }!!).jsonObject
+    }
+    suspend fun saveKubernetesSettings(actor:UUID,body:JsonObject)=db.transaction { c ->
+        requireAdmin(c,actor)
+        val keys=setOf("context","namespace","deployment","service")
+        if(body.keys!=keys) invalid("Допустимы только context, namespace, deployment и service")
+        val cleaned=buildJsonObject {
+            for(key in keys) {
+                val value=body.text(key,63)
+                val pattern=if(key=="context") "[A-Za-z0-9][A-Za-z0-9_.-]{0,62}" else "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+                if(!value.matches(Regex(pattern))) invalid("Некорректное поле $key: используйте короткое имя без пробелов и специальных символов")
+                put(key,value)
+            }
+        }
+        c.update("UPDATE server_settings SET kubernetes_config=? WHERE id=1",cleaned.toString())
+        audit(c,actor,"KUBERNETES_SETTINGS","server",cleaned.toString())
+    }
     suspend fun settings(actor:UUID):JsonObject=db.readOnly { c ->
         requireAdmin(c,actor)
         c.queryOne("SELECT * FROM server_settings WHERE id=1") { r -> buildJsonObject {

@@ -21,6 +21,7 @@ fun Route.adminRoutes(service: AdminService) {
     for ((path,file,type) in listOf(
         Triple("/admin", "index.html", "text/html"), Triple("/admin/", "index.html", "text/html"),
         Triple("/admin/app.js", "app.js", "application/javascript"), Triple("/admin/style.css", "style.css", "text/css"),
+        Triple("/admin/kubernetes.js", "kubernetes.js", "application/javascript"),
     )) get(path) {
         call.response.headers.append("Cache-Control","no-store")
         call.response.headers.append("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
@@ -45,6 +46,8 @@ fun Route.adminRoutes(service: AdminService) {
             get("/reports") { call.respond(service.reports(callerIdentity().userId,offset())) }
             post("/reports/{id}") { service.resolve(callerIdentity().userId,target(),call.receive()); call.respond(ok) }
             get("/settings") { call.respond(service.settings(callerIdentity().userId)) }
+            get("/kubernetes") { call.respond(service.kubernetesSettings(callerIdentity().userId)) }
+            post("/kubernetes") { service.saveKubernetesSettings(callerIdentity().userId,call.receive()); call.respond(ok) }
             post("/settings") { service.saveSettings(callerIdentity().userId,call.receive()); call.respond(ok) }
             get("/audit") { call.respond(service.auditLog(callerIdentity().userId,offset())) }
             get("/smtp-profiles") { call.respond(service.profiles(callerIdentity().userId)) }

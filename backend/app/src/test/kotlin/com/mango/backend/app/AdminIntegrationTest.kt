@@ -20,6 +20,30 @@ import java.util.UUID
 import kotlin.test.*
 
 class AdminIntegrationTest:IntegrationTestBase() {
+    @Test fun `kubernetes operator settings require management role and reject command injection`()=withApp { client ->
+        val admin=client.admin()
+        val user=client.newUser("operator-user@example.com","operatoruser")
+        fun config(context:String="docker-desktop")=buildJsonObject {
+            put("context",context);put("namespace","mango-dev");put("deployment","backend");put("service","backend")
+        }
+        assertEquals(HttpStatusCode.Unauthorized,client.get("/v1/admin/kubernetes").status)
+        assertEquals(HttpStatusCode.Forbidden,client.change(user,"/kubernetes",config()).status)
+        assertEquals(HttpStatusCode.OK,client.change(admin,"/kubernetes",config()).status)
+        val saved=client.get("/v1/admin/kubernetes") {bearerAuth(admin.accessToken)}.body<JsonObject>()
+        assertEquals(config(),saved)
+        for(value in listOf("x;whoami","$(whoami)","--help","a b","x\nwhoami")) {
+            assertEquals(HttpStatusCode.UnprocessableEntity,client.change(admin,"/kubernetes",config(value)).status)
+        }
+        assertEquals(HttpStatusCode.UnprocessableEntity,client.change(admin,"/kubernetes",buildJsonObject {
+            config().forEach { (k,v)->put(k,v) };put("token","must-not-be-stored")
+        }).status)
+        val audit=client.get("/v1/admin/audit") {bearerAuth(admin.accessToken)}.body<JsonArray>()
+        assertEquals(1,audit.count {it.jsonObject["action"]?.jsonPrimitive?.content=="KUBERNETES_SETTINGS"})
+        val adminId=client.id(admin)
+        database.transaction {it.update("UPDATE service_admins SET role='MODERATOR' WHERE user_id=?",adminId)}
+        assertEquals(HttpStatusCode.Forbidden,client.get("/v1/admin/kubernetes") {bearerAuth(admin.accessToken)}.status)
+        assertEquals(HttpStatusCode.Forbidden,client.change(admin,"/kubernetes",config()).status)
+    }
     @BeforeEach fun cleanup()=resetDatabase()
     private suspend fun HttpClient.id(token:TokenPairResponse):UUID=get("/v1/users/me") { bearerAuth(token.accessToken) }.body<CurrentUserResponse>().id
     private suspend fun HttpClient.admin():TokenPairResponse {

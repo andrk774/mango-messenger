@@ -9,6 +9,7 @@ const root = path.resolve(__dirname, '../backend/app/src/main/resources');
 const out = path.resolve(__dirname, '../artifacts/web-acceptance');
 fs.mkdirSync(out, { recursive: true });
 const routes = {'/web/welcome.js':'web/welcome.js','/':'web/index.html','/web/':'web/web.html','/web/app.js':'web/app.js','/web/style.css':'web/style.css','/admin/':'admin/index.html','/admin/app.js':'admin/app.js','/admin/style.css':'admin/style.css'};
+routes['/admin/kubernetes.js']='admin/kubernetes.js';
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 const server = http.createServer((req,res) => {
   const file = routes[new URL(req.url,'http://localhost').pathname];
@@ -21,6 +22,7 @@ const peer = {id:'10000000-0000-4000-8000-000000000002',displayName:'Участ�
 const chat = {id:'20000000-0000-4000-8000-000000000001',title:'Проверка команды',type:'GROUP',unreadCount:0};
 const members = [{userId:user.id,displayName:user.displayName,role:'OWNER'},{userId:peer.id,displayName:peer.displayName,role:'MEMBER'}];
 let messages = [{id:'30000000-0000-4000-8000-000000000001',conversationId:chat.id,senderId:peer.id,senderName:peer.displayName,seq:1,type:'TEXT',body:'Обсудим проект: https://example.test/plan <img src=x onerror=alert(1)>',createdAt:new Date().toISOString(),reactions:[],attachments:[]}];
+let kubernetes={context:'docker-desktop',namespace:'mango-dev',deployment:'backend',service:'backend'};
 let tasks = [], sends = [], mutations = [], failFirstSend = true;
 const welcomeTasks=['AVATAR','INVITE','CHAT','TASK'].map(kind=>({kind,status:'PENDING'}));
 const violations = [];
@@ -58,6 +60,7 @@ async function fixture(route) {
  else if(p==='/v1/admin/me') result={role:'OWNER'};
  else if(p==='/v1/admin/overview') result={users:2,conversations:1,messages:4,tasks:1,database:'ready',environment:'TEST',uptimeSeconds:120,redisConfigured:true,firebaseConfigured:false,freeStorageBytes:20e9,maxUploadMb:100,user_blocks:0,user_reports:0};
  else if(p==='/v1/admin/users') result=[{...peer,name:'<img src=x onerror=alert(1)>',email:'peer@example.test',points:0,verified:true,createdAt:new Date().toISOString()}];
+ else if(p==='/v1/admin/kubernetes') {if(method==='POST')kubernetes=body;result=kubernetes;}
  else if(p==='/v1/admin/settings') result={serverName:'Mango',registrationOpen:true,smtpProfileId:null};
  else if(['/v1/admin/reports','/v1/admin/audit','/v1/admin/smtp-profiles'].includes(p)&&method==='GET') result=[];
  else if(p.startsWith('/v1/admin/')&&method==='POST') result={ok:true};
@@ -141,6 +144,17 @@ async function run() {
   await page.locator('[data-tab=smtp]').click();await page.getByRole('button',{name:'＋ Добавить SMTP'}).click();
   await page.locator('#dialog [name=preset]').selectOption('mailpit');await page.locator('#dialog [name=sender]').fill('noreply@example.test');await page.getByRole('button',{name:'Сохранить профиль'}).click();await page.locator('#dialog').waitFor({state:'hidden'});
   const smtp=mutations.find(m=>m.p==='/v1/admin/smtp-profiles');assert.equal(smtp.body.host,'mailpit');assert.equal(smtp.body.port,1025);
+  await page.locator('[data-tab=settings]').click();
+  await page.locator('[name=context]').fill('operator-cluster');
+  const namespace=page.locator('[name=namespace]');await namespace.fill('team-dev');
+  await namespace.locator('xpath=ancestor::form').locator('button[type=submit]').click();
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('textarea')).some(x=>x.value.includes('--context=operator-cluster --namespace=team-dev')));
+  assert.equal(mutations.filter(m=>m.p==='/v1/admin/kubernetes').length,1);
+  await page.setViewportSize({width:390,height:844});await noOverflow(page);
+  await page.screenshot({path:path.join(out,'kubernetes-settings-mobile-fixture.png'),fullPage:true});
+  await page.locator('[data-tab=overview]').click();await page.locator('.cards').waitFor();
+  await page.locator('[data-tab=settings]').click();
+  await page.waitForFunction(()=>document.querySelector('[name=context]')?.value==='operator-cluster');
   for(const tab of ['reports','settings','audit']){await page.locator('[data-tab='+tab+']').click();await page.locator('#view').getByText('Загрузка…',{exact:true}).waitFor({state:'hidden'});}
   await page.setViewportSize({width:390,height:844});await noOverflow(page);
   assert.deepEqual(violations,[]);
