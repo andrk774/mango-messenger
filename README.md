@@ -8,6 +8,33 @@ Android-мессенджер с совместными задачами, веб-
 Все функции бесплатны; Premium задуман как добровольная поддержка проекта.
 Внешний ИИ и приём платежей пока не подключены.
 
+## Скриншоты
+
+Экраны Android сняты на Galaxy 19 ноября 2026 года. Веб-экраны получены
+20 ноября 2026 года; задачи и показатели админ-панели используют тестовые данные.
+Скриншоты показывают интерфейс соответствующих сборок, а не состояние публичного сервера.
+
+| Чаты Android | Задачи Android | Выбор фона |
+|---|---|---|
+| <img src="docs/screenshots/android-chats.png" width="250" alt="Mango на Android: список чатов"> | <img src="docs/screenshots/android-tasks.png" width="250" alt="Mango на Android: список задач"> | <img src="docs/screenshots/android-background.png" width="250" alt="Mango на Android: выбор фона чата"> |
+
+<details>
+<summary>Главная страница, веб-задачи и админ-панель</summary>
+
+**Главная страница**
+
+![Главная страница Mango](docs/screenshots/web-homepage.png)
+
+**Задачи в браузере — тестовые данные**
+
+![Веб-клиент Mango: задачи](docs/screenshots/web-tasks.png)
+
+**Админ-панель — тестовые показатели**
+
+![Mango Admin: обзор сервера](docs/screenshots/admin-overview.png)
+
+</details>
+
 ## Возможности
 
 - Регистрация с подтверждением email, вход, восстановление пароля и управление профилем.
