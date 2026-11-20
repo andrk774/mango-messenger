@@ -21,8 +21,10 @@ import javax.inject.Singleton
 @Serializable data class ReferralDto(val code:String,val invited:Int,val applied:Boolean)
 @Serializable data class ReferralCodeDto(val code:String)
 @Serializable data class ReferralAppliedDto(val applied:Boolean)
+@Serializable data class AdminAccessDto(val role:String)
 
 interface AccountFeaturesApi {
+    @GET("v1/admin/me") suspend fun adminAccess():Response<AdminAccessDto>
     @PATCH("v1/users/me/referral") suspend fun editReferral(@Body code:ReferralCodeDto):Response<ReferralCodeDto>
     @GET("v1/users/me/referral") suspend fun referral():Response<ReferralDto>
     @POST("v1/users/me/referral") suspend fun referral(@Body code:ReferralCodeDto):Response<ReferralAppliedDto>
@@ -38,6 +40,7 @@ interface AccountFeaturesApi {
 }
 
 @Singleton class AccountFeaturesRemote @Inject constructor(private val api:AccountFeaturesApi) {
+    suspend fun adminAccess() = apiCall {api.adminAccess()}
     suspend fun referral() = apiCall {api.referral()}
     suspend fun editReferral(code:String) = apiCall {api.editReferral(ReferralCodeDto(code))}
     suspend fun applyReferral(code:String) = apiCall {api.referral(ReferralCodeDto(code))}

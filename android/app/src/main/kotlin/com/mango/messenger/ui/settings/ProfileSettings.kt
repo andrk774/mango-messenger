@@ -35,6 +35,7 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
     val avatarBusy by viewModel.avatarBusy.collectAsStateWithLifecycle()
     val avatarMessage by viewModel.avatarMessage.collectAsStateWithLifecycle()
     val account by viewModel.account.collectAsStateWithLifecycle()
+    val adminAccess by viewModel.adminAccess.collectAsStateWithLifecycle()
     var page by rememberSaveable {mutableStateOf<String?>(null)}
     var edit by remember {mutableStateOf(false)}
     var password by remember {mutableStateOf(false)}
@@ -43,6 +44,10 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
     val context=LocalContext.current
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {uri->uri?.let {viewModel.uploadAvatar(context.applicationContext,it)}}
     val user=state.currentUser
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshAdminAccess()
+    }
+    LaunchedEffect(user?.id) {viewModel.refreshAdminAccess()}
     LaunchedEffect(Unit) {viewModel.refreshAccount()}
     BackHandler(page!=null) {page=null}
     Scaffold(modifier=modifier,containerColor=MaterialTheme.colorScheme.surfaceContainer,
@@ -89,6 +94,14 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
                 SettingsLink("Уведомления",Icons.Default.Notifications) {page="Уведомления"}
                 SettingsLink("Данные и синхронизация",Icons.Default.Storage) {page="Данные и синхронизация"}
                 SettingsLink("Конфиденциальность",Icons.Default.Lock) {page="Конфиденциальность"}
+                if(adminAccess) SettingsLink("Админ-панель",Icons.Default.AdminPanelSettings) {
+                    val uri=android.net.Uri.parse(com.mango.messenger.BuildConfig.SERVER_URL.trimEnd('/')+"/admin/")
+                    try {
+                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,uri))
+                    } catch(_:android.content.ActivityNotFoundException) {
+                        android.widget.Toast.makeText(context,"Не найден браузер для открытия админ-панели",android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
                 TextButton(onClick=onSignOut,modifier=Modifier.fillMaxWidth().padding(16.dp)) {Text("Выйти из аккаунта",color=MaterialTheme.colorScheme.error)}
                 Text("Mango ${com.mango.messenger.BuildConfig.VERSION_NAME}",Modifier.align(Alignment.CenterHorizontally).padding(bottom=24.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)
             } else when(page) {

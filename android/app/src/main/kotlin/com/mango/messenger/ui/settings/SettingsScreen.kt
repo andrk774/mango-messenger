@@ -77,6 +77,19 @@ class SettingsViewModel @Inject constructor(
     userRepository: UserRepository,
     syncStatusRepository: SyncStatusRepository,
 ) : ViewModel() {
+    val adminAccess = kotlinx.coroutines.flow.MutableStateFlow(false)
+    private var adminCheck: kotlinx.coroutines.Job? = null
+    fun refreshAdminAccess() {
+        adminCheck?.cancel()
+        adminAccess.value=false
+        adminCheck=viewModelScope.launch {
+            val owner=database.userDao().currentUserId() ?: return@launch
+            val result=accountRemote.adminAccess()
+            if(database.userDao().currentUserId()==owner && result is com.mango.core.common.Outcome.Success) {
+                adminAccess.value=result.value.role in setOf("OWNER","ADMIN","MODERATOR")
+            }
+        }
+    }
     val profile = kotlinx.coroutines.flow.MutableStateFlow<com.mango.core.network.dto.CurrentUserDto?>(null)
     val referral = kotlinx.coroutines.flow.MutableStateFlow<com.mango.core.network.ReferralDto?>(null)
     val referralBusy = kotlinx.coroutines.flow.MutableStateFlow(false)
