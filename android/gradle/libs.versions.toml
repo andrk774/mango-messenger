@@ -1,57 +1,52 @@
-# Mango Messenger — version catalog.
-#
-# ВАЖНО: эти версии подобраны и ПРОВЕРЕНЫ реальной сборкой на окружении проекта
-# (см. docs/adr/0002-build-toolchain.md). Стек закреплён на AGP 8.x, потому что
-# локально установлен Android SDK до android-36 включительно и отсутствует sdkmanager.
-# Текущая генерация androidx (compose 1.12, core-ktx 1.19, lifecycle 2.11, hilt 2.59+)
-# требует AGP 9.1 + compileSdk 37 — это отдельная задача миграции.
+# Mango Messenger version catalog. See docs/adr/0002-build-toolchain.md.
 
 [versions]
 # --- toolchain (проверено сборкой) ---
-agp = "8.13.1"
-kotlin = "2.4.20"
+agp = "9.5.3"
+kotlin = "2.4.21"
 ksp = "2.3.14"
-hilt = "2.58"
-compileSdk = "36"
+hilt = "2.60.1"
+compileSdk = "37"
+compileSdkMinor = "1"
 targetSdk = "36"
 minSdk = "26"
 buildTools = "36.0.0"
 
 # --- androidx ---
-coreKtx = "1.17.0"
-activityCompose = "1.10.1"
-composeBom = "2026.03.01"
-lifecycle = "2.9.4"
-navigation = "2.9.8"
-hiltExt = "1.3.0"
+coreKtx = "1.19.1"
+activityCompose = "1.13.0"
+composeBom = "2026.11.01"
+lifecycle = "2.11.1"
+navigation = "2.10.2"
+hiltExt = "1.4.0"
 room = "2.8.5"
 paging = "3.5.3"
 datastore = "1.3.0"
 work = "2.12.0"
 securityCrypto = "1.1.0"
-splashscreen = "1.0.1"
+splashscreen = "1.2.0"
 profileinstaller = "1.4.1"
 
 # --- network / serialization ---
 retrofit = "3.0.0"
-okhttp = "5.1.0"
-serialization = "1.10.0"
-coroutines = "1.10.2"
+okhttp = "5.5.1"
+serialization = "1.13.0"
+coroutines = "1.11.0"
 
 # --- media ---
-coil = "3.3.0"
-firebaseBom = "34.0.0"
-googleServices = "4.4.3"
+coil = "3.6.3"
+firebaseBom = "35.2.0"
+googleServices = "4.6.0"
 
 # --- testing ---
 junit4 = "4.13.2"
-mockk = "1.14.3"
-turbine = "1.2.0"
-robolectric = "4.16"
-androidxTestCore = "1.6.1"
-androidxTestRunner = "1.6.2"
-androidxTestJunit = "1.2.1"
-espresso = "3.6.1"
+mockk = "1.14.12"
+turbine = "1.2.1"
+robolectric = "4.18.1"
+androidxTestCore = "1.7.0"
+androidxTestRunner = "1.7.0"
+androidxTestJunit = "1.3.0"
+espresso = "3.7.0"
 
 [libraries]
 # --- kotlin / coroutines ---
@@ -90,7 +85,7 @@ navigation-compose = { module = "androidx.navigation:navigation-compose", versio
 # --- hilt ---
 hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
 hilt-compiler = { module = "com.google.dagger:hilt-android-compiler", version.ref = "hilt" }
-hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hiltExt" }
+hilt-navigation-compose = { module = "androidx.hilt:hilt-lifecycle-viewmodel-compose", version.ref = "hiltExt" }
 hilt-work = { module = "androidx.hilt:hilt-work", version.ref = "hiltExt" }
 hilt-ext-compiler = { module = "androidx.hilt:hilt-compiler", version.ref = "hiltExt" }
 hilt-android-testing = { module = "com.google.dagger:hilt-android-testing", version.ref = "hilt" }
@@ -151,7 +146,6 @@ google-services = { id = "com.google.gms.google-services", version.ref = "google
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 android-test = { id = "com.android.test", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

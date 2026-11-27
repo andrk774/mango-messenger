@@ -32,10 +32,10 @@ data class UserSettings(
     /**
      * Показывать текст сообщения в уведомлении.
      *
-     * По умолчанию ВЫКЛЮЧЕНО: содержимое переписки на экране блокировки —
-     * это утечка, которую пользователь должен включать осознанно.
+     * Включено по умолчанию. Явный выбор пользователя сохраняется.
+     * Экран блокировки получает отдельную версию без содержимого.
      */
-    val showMessagePreviewInNotification: Boolean = false,
+    val showMessagePreviewInNotification: Boolean = true,
     val sendReadReceipts: Boolean = true,
     val sendTypingIndicator: Boolean = true,
     val autoDownloadMediaOnWifiOnly: Boolean = true,
@@ -74,7 +74,7 @@ class SettingsStore @Inject constructor(
                 dynamicColorEnabled = preferences[Keys.DYNAMIC_COLOR] ?: false,
                 messageNotificationsEnabled = preferences[Keys.MESSAGE_NOTIFICATIONS] ?: true,
                 taskNotificationsEnabled = preferences[Keys.TASK_NOTIFICATIONS] ?: true,
-                showMessagePreviewInNotification = preferences[Keys.MESSAGE_PREVIEW] ?: false,
+                showMessagePreviewInNotification = preferences[Keys.MESSAGE_PREVIEW] ?: true,
                 sendReadReceipts = preferences[Keys.READ_RECEIPTS] ?: true,
                 sendTypingIndicator = preferences[Keys.TYPING_INDICATOR] ?: true,
                 autoDownloadMediaOnWifiOnly = preferences[Keys.WIFI_ONLY_MEDIA] ?: true,

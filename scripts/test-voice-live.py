@@ -1,10 +1,12 @@
-"""Local acceptance using existing test accounts and a synthetic Russian recording."""
+"""Local acceptance using fresh test accounts and a synthetic Russian recording."""
 import hashlib
 import json
 from pathlib import Path
 import subprocess
 import urllib.request
 import uuid
+import secrets
+import time
 
 ROOT=Path(__file__).resolve().parent.parent
 OUT=ROOT/'artifacts/voice-acceptance'
@@ -21,7 +23,23 @@ def api(path,body=None,token=None,method=None):
 def login(account):
     return api('/v1/auth/login',{'email':account['email'],'password':account['password'],'device':{'platform':'WEB','model':'Voice acceptance','appVersion':'1'}})['accessToken']
 
-owner=load('galaxy-test-account.json');peer=load('acceptance-peer.json')['account']
+def fresh_account():
+    name='voice_'+uuid.uuid4().hex[:12]
+    account={'email':name+'@example.test','password':secrets.token_urlsafe(24)}
+    api('/v1/auth/register',{**account,'username':name,'displayName':'Voice acceptance'})
+    for _ in range(30):
+        with urllib.request.urlopen('http://127.0.0.1:8026/api/v1/messages',timeout=10) as response:
+            letters=json.load(response)
+        letter=next((m for m in letters.get('messages',[]) if any(t.get('Address')==account['email'] for t in m.get('To',[]))),None)
+        if letter:
+            with urllib.request.urlopen('http://127.0.0.1:8026/api/v1/message/'+letter['ID'],timeout=10) as response:
+                token=json.load(response)['Text'].strip().split(': ')[-1]
+            api('/v1/auth/verify-email',{'email':account['email'],'token':token})
+            return account
+        time.sleep(.5)
+    raise AssertionError('Verification email not received')
+
+owner=fresh_account();peer=fresh_account()
 one=login(owner);two=login(peer)
 try:
     me=api('/v1/users/me',token=one)

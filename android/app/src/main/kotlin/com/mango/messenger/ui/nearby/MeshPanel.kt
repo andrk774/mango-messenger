@@ -45,7 +45,10 @@ import androidx.lifecycle.compose.LifecycleEventEffect
             Button(onClick={mesh.connectWifi(address)},enabled=address.isNotBlank()){Text("Подключиться по Wi-Fi")}
             Button(onClick={if(Build.VERSION.SDK_INT>=31)permission.launch(Manifest.permission.BLUETOOTH_CONNECT) else {mesh.paired();mesh.listenBluetooth()}}){Text("Включить Bluetooth и ожидать")}
             Text("Для Bluetooth сначала сопрягите телефоны в настройках Android. На втором выберите первый в списке ниже.")
-            peers.forEach{peer->TextButton(onClick={mesh.connectBluetooth(peer)}){Text(runCatching{peer.name?:peer.address}.getOrDefault("Сопряжённый телефон"))}}
+            peers.forEach{peer->TextButton(onClick={mesh.connectBluetooth(peer)}){
+                val label=try { peer.name ?: peer.address } catch (_: SecurityException) { "Сопряжённый телефон" }
+                Text(label)
+            }}
             TextButton(onClick={mesh.stop()}){Text("Выключить комнату")}
         }
         if(code.isNotBlank())TextButton(onClick={

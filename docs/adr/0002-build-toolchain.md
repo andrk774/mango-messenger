@@ -4,6 +4,24 @@
 - **Дата:** 2026-11-12
 - **Этап:** 2
 
+## Обновление от 2026-11-27: миграция AGP 9
+
+Владелец одобрил AGP 9 и compileSdk 37. После промежуточной проверки AGP 9.1.1
+миграция использует AGP 9.5.3, Gradle 9.9.2 и встроенный Kotlin;
+targetSdk 36, minSdk 26 и JVM 17 сохранены.
+Старое решение ниже оставлено как история. Результаты приёмки новой сборки
+фиксируются отдельно; изменение каталога само по себе не подтверждает APK.
+
+- Удалено применение `org.jetbrains.kotlin.android` в convention-плагинах.
+- Используется публичный AGP DSL вместо внутренних классов.
+- Ресурсы локального CA подключаются через Variant Sources API.
+- Compose 2026.11.01 требует SDK 37.1: `android sdk install platforms/android-37.1`;
+  в DSL установлены compileSdk 37 и compileSdkMinor 1.
+- Build Tools 36.0.0 поддерживаются AGP 9.5 и остаются закреплёнными.
+
+Основание: [совместимость AGP 9.5](https://developer.android.com/build/releases/agp-9-5-0-release-notes),
+[встроенный Kotlin](https://developer.android.com/build/migrate-to-built-in-kotlin).
+
 ## Обновление от 2026-11-12
 
 `cmdline-tools` версии 23.0 **установлены** в SDK по запросу владельца

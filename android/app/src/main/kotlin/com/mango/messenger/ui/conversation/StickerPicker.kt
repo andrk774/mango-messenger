@@ -1,5 +1,6 @@
 package com.mango.messenger.ui.conversation
 
+import androidx.core.graphics.createBitmap
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -40,7 +41,7 @@ internal suspend fun createSticker(context: Context, sticker: BuiltInSticker): U
     FileProvider.getUriForFile(context, "${context.packageName}.files", createStickerFile(context, sticker))
 
 internal suspend fun createStickerFile(context: Context, sticker: BuiltInSticker): File = withContext(Dispatchers.IO) {
-    val bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+    val bitmap = createBitmap(512, 512)
     try {
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }

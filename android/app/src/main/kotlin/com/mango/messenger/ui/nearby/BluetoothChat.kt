@@ -31,7 +31,7 @@ class BluetoothChat(context:Context,private val scope:CoroutineScope) {
     fun paired() {
         runCatching {
             check(adapter?.isEnabled==true)
-            peers.value=adapter!!.bondedDevices.sortedBy { it.address }
+            peers.value=adapter.bondedDevices.sortedBy { it.address }
             status.value=if(peers.value.isEmpty()) "Сначала выполните сопряжение в настройках Bluetooth" else "Выберите сопряжённый телефон"
         }.onFailure { status.value="Включите Bluetooth и разрешите доступ к устройствам" }
     }
@@ -53,7 +53,7 @@ class BluetoothChat(context:Context,private val scope:CoroutineScope) {
             try {
                 check(adapter?.isEnabled==true && peer.bondState==BluetoothDevice.BOND_BONDED)
                 if(listen) {
-                    val listener=adapter!!.listenUsingRfcommWithServiceRecord("Mango offline",service)
+                    val listener=adapter.listenUsingRfcommWithServiceRecord("Mango offline",service)
                     synchronized(lifecycleLock) {
                         if(generation!=ticket) {listener.close();throw CancellationException()}
                         server=listener

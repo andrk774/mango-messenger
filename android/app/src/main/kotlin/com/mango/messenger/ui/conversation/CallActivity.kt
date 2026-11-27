@@ -39,12 +39,12 @@ class CallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         val layout=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;fitsSystemWindows=true}
-        layout.addView(Button(this).apply {text="‹ Завершить и вернуться в чат";setOnClickListener{finish()}})
-        val status=TextView(this).apply{text="Проверяем доступ к звонку…";setPadding(16,16,16,16)};layout.addView(status);setContentView(layout)
+        layout.addView(Button(this).apply {setText(com.mango.messenger.R.string.callactivity_text_0);setOnClickListener{finish()}})
+        val status=TextView(this).apply{setText(com.mango.messenger.R.string.callactivity_text_1);setPadding(16,16,16,16)};layout.addView(status);setContentView(layout)
         val id=intent.getStringExtra("conversationId")?:return finish()
         lifecycleScope.launch {
             val result=account.joinCall(id)
-            if(result !is Outcome.Success){status.text="Звонки пока недоступны. Проверьте сеть и настройку сервера звонков.";return@launch}
+            if(result !is Outcome.Success){status.setText(com.mango.messenger.R.string.callactivity_text_2);return@launch}
             val grant=result.value
             val view=WebView(this@CallActivity);web=view
             view.settings.apply {javaScriptEnabled=true;domStorageEnabled=false;allowFileAccess=false;allowContentAccess=false;mixedContentMode=WebSettings.MIXED_CONTENT_NEVER_ALLOW;mediaPlaybackRequiresUserGesture=false;cacheMode=WebSettings.LOAD_NO_CACHE}
@@ -64,7 +64,7 @@ class CallActivity : ComponentActivity() {
                         return WebResourceResponse("text/plain","UTF-8",403,"Blocked",emptyMap(),java.io.ByteArrayInputStream(ByteArray(0)))
                     return try{assetClient.newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(okhttp3.Request.Builder().url(request.url.toString()).build()).execute().use{r->
                         if(r.code !in 200..299)throw IllegalStateException()
-                        WebResourceResponse(r.body?.contentType()?.let{"${it.type}/${it.subtype}"}?:"text/plain","UTF-8",r.code,"OK",r.headers.toMultimap().mapValues{it.value.joinToString(",")},java.io.ByteArrayInputStream(r.body?.bytes()?:ByteArray(0)))
+                        WebResourceResponse(r.body.contentType()?.let{"${it.type}/${it.subtype}"}?:"text/plain","UTF-8",r.code,"OK",r.headers.toMultimap().mapValues{it.value.joinToString(",")},java.io.ByteArrayInputStream(r.body.bytes()))
                     }}catch(_:Exception){WebResourceResponse("text/plain","UTF-8",503,"Unavailable",emptyMap(),java.io.ByteArrayInputStream(ByteArray(0)))}
                 }
                 override fun shouldOverrideUrlLoading(view:WebView,request:WebResourceRequest)= !sameOrigin(request.url.toString())||request.url.path!="/web/call.html"
@@ -74,7 +74,7 @@ class CallActivity : ComponentActivity() {
                     val payload=JSONObject().put("url",grant.url).put("token",grant.token).put("video",intent.getBooleanExtra("video",false)).put("relayOnly",grant.relayOnly).put("iceServers",org.json.JSONArray().apply { grant.iceServers.forEach { put(JSONObject().put("urls",org.json.JSONArray(it.urls)).put("username",it.username).put("credential",it.credential)) } }).toString()
                     view.evaluateJavascript("window.startMangoCall($payload)",null);status.visibility=android.view.View.GONE
                 }
-                override fun onReceivedError(view:WebView,request:WebResourceRequest,error:WebResourceError){if(request.isForMainFrame){status.text="Не удалось загрузить звонок. Проверьте доступ к серверу Mango.";status.visibility=android.view.View.VISIBLE}}
+                override fun onReceivedError(view:WebView,request:WebResourceRequest,error:WebResourceError){if(request.isForMainFrame){status.setText(com.mango.messenger.R.string.callactivity_text_3);status.visibility=android.view.View.VISIBLE}}
             }
             layout.addView(view,LinearLayout.LayoutParams(-1,0,1f));view.loadUrl(BuildConfig.SERVER_URL.trimEnd('/')+"/web/call.html")
         }

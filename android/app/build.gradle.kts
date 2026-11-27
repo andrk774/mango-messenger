@@ -31,11 +31,16 @@ val lanDomain = (findProperty("mango.lanDomain") as String?) ?: "mango.home.arpa
 val hasLanCa = lanCaFile.isFile
 val lanResDir = layout.buildDirectory.dir("generated/lan-ca/res")
 
-val prepareLanCa by tasks.registering {
+abstract class PrepareLanCaTask : DefaultTask() {
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+}
+
+val prepareLanCa = tasks.register<PrepareLanCaTask>("prepareLanCa") {
     description = "Кладёт сертификат локального ЦС и настройку доверия к нему в ресурсы"
     inputs.file(lanCaFile).optional()
     inputs.property("domain", lanDomain)
-    outputs.dir(lanResDir)
+    outputDirectory.set(lanResDir)
     onlyIf { hasLanCa }
     doLast {
         val res = lanResDir.get().asFile
@@ -70,7 +75,13 @@ fun lanNetworkConfig(domain: String, debug: Boolean): String = buildString {
     appendLine("</network-security-config>")
 }
 
-tasks.named("preBuild") { dependsOn(prepareLanCa) }
+androidComponents {
+    onVariants { variant ->
+        if (hasLanCa) {
+            variant.sources.res?.addGeneratedSourceDirectory(prepareLanCa) { it.outputDirectory }
+        }
+    }
+}
 
 android {
     namespace = "com.mango.messenger"
@@ -84,10 +95,6 @@ android {
         buildConfigField("String", "SERVER_FALLBACK_IP", "\"$serverFallbackIp\"")
         manifestPlaceholders["networkSecurityConfig"] =
             if (hasLanCa) "@xml/network_security_config_lan" else "@xml/network_security_config"
-    }
-
-    if (hasLanCa) {
-        sourceSets.getByName("main").res.srcDir(lanResDir)
     }
 
     val releaseStore = System.getenv("MANGO_KEYSTORE_PATH")

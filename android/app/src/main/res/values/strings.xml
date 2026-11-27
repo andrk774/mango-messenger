@@ -1,10 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Mango</string>
+    <string name="notification_reply">Ответить</string>
+    <string name="notification_read">Прочитано</string>
+    <string name="notification_reply_hint">Сообщение</string>
+    <string name="notification_hidden">Новое уведомление</string>
+    <string name="admin_login_required">Войдите в Mango.</string>
+    <string name="admin_access_unconfirmed">Доступ не подтверждён. Проверьте права аккаунта и соединение или вернитесь в настройки.</string>
 
     <string name="nav_chats">Чаты</string>
     <string name="nav_tasks">Задачи</string>
     <string name="nav_contacts">Контакты</string>
     <string name="nav_notifications">Уведомления</string>
     <string name="nav_settings">Настройки</string>
+    <string name="admin_status_0">Не удалось проверить права доступа. Вернитесь в Mango и попробуйте снова.</string>
+    <string name="admin_status_1">Открываем админ-панель…</string>
+    <string name="admin_status_2">Не удалось открыть сервер. Проверьте Wi-Fi и доступность имени сервера. Вернитесь в Mango и откройте панель снова.</string>
+    <string name="adminpanelactivity_text_0">‹ Вернуться в Mango</string>
+    <string name="adminpanelactivity_text_1">Проверяем права доступа…</string>
+    <string name="callactivity_text_0">‹ Завершить и вернуться в чат</string>
+    <string name="callactivity_text_1">Проверяем доступ к звонку…</string>
+    <string name="callactivity_text_2">Звонки пока недоступны. Проверьте сеть и настройку сервера звонков.</string>
+    <string name="callactivity_text_3">Не удалось загрузить звонок. Проверьте доступ к серверу Mango.</string>
 </resources>

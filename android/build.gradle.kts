@@ -3,7 +3,6 @@
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.android.library) apply false
-    alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.serialization) apply false
     alias(libs.plugins.compose.compiler) apply false
@@ -18,7 +17,7 @@ subprojects {
         resolutionStrategy.eachDependency {
             // Hilt's reader must understand the metadata produced by Kotlin 2.4.
             if (requested.group == "org.jetbrains.kotlin" && requested.name == "kotlin-metadata-jvm") {
-                useVersion("2.4.20")
+                useVersion(libs.versions.kotlin.get())
             }
         }
     }

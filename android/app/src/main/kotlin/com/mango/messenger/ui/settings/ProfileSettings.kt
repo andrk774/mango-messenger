@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,7 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mango.core.designsystem.component.MangoAvatar
 import com.mango.core.designsystem.component.SectionHeader
@@ -28,8 +29,9 @@ import com.mango.core.designsystem.component.SectionHeader
 @Composable
 fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Unit,
     onNearby:()->Unit,
+    modifier:Modifier=Modifier,
     openRootRequest:Int=0,
-    modifier:Modifier=Modifier,viewModel:SettingsViewModel=hiltViewModel()) {
+    viewModel:SettingsViewModel=hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val busy by viewModel.profileBusy.collectAsStateWithLifecycle()
@@ -43,6 +45,7 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
     var password by remember {mutableStateOf(false)}
     var menu by remember {mutableStateOf(false)}
     val scroll=rememberScrollState()
+    val showProfileTitle by remember { derivedStateOf { scroll.value > 240 } }
     var handledRootRequest by rememberSaveable { mutableIntStateOf(openRootRequest) }
     LaunchedEffect(openRootRequest) {
         if (handledRootRequest != openRootRequest) {
@@ -64,7 +67,7 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
     LaunchedEffect(Unit) {viewModel.refreshAccount()}
     BackHandler(page!=null) {page=null}
     Scaffold(modifier=modifier,containerColor=MaterialTheme.colorScheme.surfaceContainer,
-        topBar={TopAppBar(title={if(page!=null || scroll.value>240) Text(page ?: user?.displayName ?: "Профиль")},
+        topBar={TopAppBar(title={if(page!=null || showProfileTitle) Text(page ?: user?.displayName ?: "Профиль")},
             navigationIcon={if(page!=null) IconButton(onClick={page=null}) {Icon(Icons.AutoMirrored.Filled.ArrowBack,"Назад")}},
             actions={if(page==null) Box {
                 IconButton(onClick={menu=true}) {Icon(Icons.Default.MoreHoriz,"Меню профиля")}
@@ -100,17 +103,17 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
                 Spacer(Modifier.height(12.dp))
                 SettingsLink("Реферальная программа",Icons.Default.PersonAdd) {page="Реферальная программа"}
                 SettingsLink("Промокоды",Icons.Default.Redeem) {page="Промокоды"}
-                SettingsLink("Контакты",Icons.Default.Person,onClick=onContacts)
+                SettingsLink(androidx.compose.ui.res.stringResource(com.mango.messenger.R.string.nav_contacts),Icons.Default.Person,onClick=onContacts)
                 SettingsLink("Люди рядом",Icons.Default.NearMe,onClick=onNearby)
                 SettingsLink("Центр уведомлений",Icons.Default.Notifications,onClick=onNotifications)
                 Spacer(Modifier.height(12.dp))
                 SettingsLink("Внешний вид",Icons.Default.Palette) {page="Внешний вид"}
                 SettingsLink("Иконка приложения",Icons.Default.Image) {page="Иконка приложения"}
                 SettingsLink("Фон чата",Icons.Default.Wallpaper) {page="Фон чата"}
-                SettingsLink("Уведомления",Icons.Default.Notifications) {page="Уведомления"}
+                SettingsLink(androidx.compose.ui.res.stringResource(com.mango.messenger.R.string.nav_notifications),Icons.Default.Notifications) {page="Уведомления"}
                 SettingsLink("Данные и синхронизация",Icons.Default.Storage) {page="Данные и синхронизация"}
                 SettingsLink("Конфиденциальность",Icons.Default.Lock) {page="Конфиденциальность"}
-                SettingsLink("Служба поддержки",Icons.Default.HelpOutline) {page="Служба поддержки"}
+                SettingsLink("Служба поддержки",Icons.AutoMirrored.Filled.HelpOutline) {page="Служба поддержки"}
                 if(adminAccess) SettingsLink("Админ-панель",Icons.Default.AdminPanelSettings) {
                     context.startActivity(android.content.Intent(context,AdminPanelActivity::class.java))
                 }
@@ -139,7 +142,7 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
                 "Уведомления" -> SettingsGroup {
                     SwitchRow("Новые сообщения",state.settings.messageNotificationsEnabled,viewModel::setMessageNotifications)
                     SwitchRow("Задачи и напоминания",state.settings.taskNotificationsEnabled,viewModel::setTaskNotifications)
-                    SwitchRow("Показывать текст сообщения",state.settings.showMessagePreviewInNotification,viewModel::setMessagePreview,"Текст будет виден на экране блокировки")
+                    SwitchRow("Показывать текст сообщения",state.settings.showMessagePreviewInNotification,viewModel::setMessagePreview,"Содержимое в уведомлениях; на экране блокировки скрыто")
                 }
                 "Конфиденциальность" -> SettingsGroup {
                     SettingsLink("Политика конфиденциальности",Icons.Default.PrivacyTip) {page="Политика конфиденциальности"}

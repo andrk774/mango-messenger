@@ -24,7 +24,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -38,7 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mango.core.designsystem.component.EmptyState
 import com.mango.core.designsystem.component.FullScreenLoading
@@ -76,7 +76,7 @@ fun TasksScreen(
     var newTaskTitle by remember { mutableStateOf<String?>(null) }
     var view by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("Список") }
     var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    var direction by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
+    var direction by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
     var searchOpen by remember { mutableStateOf(false) }
     var filtersOpen by remember { mutableStateOf(false) }
     var statusFilter by remember { mutableStateOf<TaskStatus?>(null) }
@@ -123,7 +123,7 @@ fun TasksScreen(
         },
     ) { padding ->
         Column(Modifier.padding(padding)) {
-            TabRow(selectedTabIndex=direction,containerColor=MaterialTheme.colorScheme.surface) {
+            PrimaryTabRow(selectedTabIndex=direction,containerColor=MaterialTheme.colorScheme.surface) {
                 listOf("Все","Входящие","Исходящие").forEachIndexed { index,label ->
                     Tab(selected=direction==index,onClick={direction=index},text={Text(label,maxLines=1)},
                         selectedContentColor=MaterialTheme.colorScheme.primary,unselectedContentColor=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -199,7 +199,7 @@ fun TasksScreen(
 @Composable
 private fun ScopeTabs(selected: TaskScope, onSelect: (TaskScope) -> Unit) {
     val scopes = TaskScope.entries
-    TabRow(selectedTabIndex = scopes.indexOf(selected)) {
+    PrimaryTabRow(selectedTabIndex = scopes.indexOf(selected)) {
         scopes.forEach { scope ->
             Tab(
                 selected = scope == selected,

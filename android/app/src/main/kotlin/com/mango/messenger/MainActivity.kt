@@ -23,7 +23,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mango.core.datastore.SettingsStore
@@ -204,10 +204,10 @@ private fun MangoApp(
                                     } else {
                                         destination.unselectedIcon
                                     },
-                                    contentDescription = destination.label,
+                                    contentDescription = androidx.compose.ui.res.stringResource(destination.label),
                                 )
                             },
-                            label = { Text(destination.label, maxLines = 1) },
+                            label = { Text(androidx.compose.ui.res.stringResource(destination.label), maxLines = 1) },
                         )
                     }
                 }

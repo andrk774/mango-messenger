@@ -92,6 +92,12 @@ fun Route.promoContactRoutes(db:Database) {
         val user=callerIdentity().userId
         call.respond(db.readOnly {c->c.query("SELECT * FROM cloud_contacts WHERE owner_id=? ORDER BY name,id LIMIT 10000",user,map=::contactJson)})
     }
+    delete("/v1/users/me/contacts/{id}") {
+        val user=callerIdentity().userId
+        val id=call.parameters["id"]?.toUuidOrNull()?:throw AppException.BadRequest("Неверный ID контакта")
+        db.transaction {c->c.update("DELETE FROM cloud_contacts WHERE owner_id=? AND id=?",user,id)}
+        call.respond(io.ktor.http.HttpStatusCode.NoContent)
+    }
     put("/v1/users/me/contacts") {
         val user=callerIdentity().userId;val body=call.receive<CloudContactInput>()
         call.respond(db.transaction {c->

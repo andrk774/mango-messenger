@@ -61,6 +61,7 @@ import kotlin.test.assertTrue
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], manifest = Config.NONE)
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TaskSyncTest {
 
     private lateinit var server: MockWebServer

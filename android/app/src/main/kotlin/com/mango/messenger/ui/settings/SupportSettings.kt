@@ -5,7 +5,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mango.core.common.Outcome
@@ -21,7 +21,7 @@ import javax.inject.Inject
     var selected by mutableStateOf<SupportTicketDto?>(null);private set
     var busy by mutableStateOf(false);private set
     var error by mutableStateOf<String?>(null);private set
-    var offset by mutableStateOf(0);private set
+    var offset by androidx.compose.runtime.mutableIntStateOf(0);private set
     fun load(next:Int=offset){if(busy)return;viewModelScope.launch{busy=true;try{when(val r=remote.support(next)){is Outcome.Success->{tickets=r.value;offset=next};is Outcome.Failure->error=r.error.toUserMessage()}}finally{busy=false}}}
     fun open(ticket:SupportTicketDto?,older:Boolean=false){if(busy)return;selected=ticket;if(ticket==null){messages=emptyList();load();return};viewModelScope.launch{busy=true;error=null;try{when(val r=remote.supportMessages(ticket.id,if(older)messages.firstOrNull()?.seq else null)){is Outcome.Success->messages=if(older)(r.value+messages).distinctBy{it.id} else r.value;is Outcome.Failure->error=r.error.toUserMessage()}}finally{busy=false}}}
     fun create(id:String,subject:String,body:String,done:()->Unit){if(busy)return;viewModelScope.launch{busy=true;error=null;try{when(val r=remote.createSupport(SupportCreateDto(id,subject,body))){is Outcome.Success->{done();selected=null};is Outcome.Failure->error=r.error.toUserMessage()}}finally{busy=false};load()}}

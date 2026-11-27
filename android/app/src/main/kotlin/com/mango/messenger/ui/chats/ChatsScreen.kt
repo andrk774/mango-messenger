@@ -30,7 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mango.core.designsystem.component.ConversationListItem
 import com.mango.core.designsystem.component.EmptyState
@@ -56,9 +56,9 @@ import com.mango.messenger.ui.format.TimeFormatters
 fun ChatsScreen(
     onConversationClick: (Conversation) -> Unit,
     onOpenConversationById: (String) -> Unit,
+    modifier: Modifier = Modifier,
     onWelcome: () -> Unit = {},
     startNewChat: Boolean = false,
-    modifier: Modifier = Modifier,
     viewModel: ChatsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -116,6 +116,7 @@ fun ChatsScreen(
         },
     ) { padding ->
         Column(Modifier.padding(padding)) {
+            com.mango.messenger.ui.stories.StoriesEntry()
             com.mango.core.designsystem.component.MangoWelcomeBanner("Добро пожаловать в Mango", "Четыре шага для лёгкого старта", onWelcome)
             if(showSearch) MangoSearchBar(
                 query = state.searchQuery,

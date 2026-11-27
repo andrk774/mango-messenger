@@ -70,8 +70,8 @@ class SettingsStoreTest {
             assertFalse(settings.dynamicColorEnabled)
             assertTrue(settings.messageNotificationsEnabled)
             assertTrue(settings.taskNotificationsEnabled)
-            assertFalse(
-                "Текст сообщения на экране блокировки должен включаться осознанно",
+            assertTrue(
+                "Текст доступен в уведомлении; экран блокировки использует скрытую publicVersion",
                 settings.showMessagePreviewInNotification,
             )
             assertTrue(
@@ -122,6 +122,13 @@ class SettingsStoreTest {
         withSettings(target) { store, _ ->
             assertTrue(store.settings.first().showMessagePreviewInNotification)
         }
+    }
+
+    @Test
+    fun `explicitly hidden message preview survives reopening`() = runTest {
+        val target = file("hidden-preview")
+        withSettings(target) { store, _ -> store.setShowMessagePreviewInNotification(false) }
+        withSettings(target) { store, _ -> assertFalse(store.settings.first().showMessagePreviewInNotification) }
     }
 
     @Test

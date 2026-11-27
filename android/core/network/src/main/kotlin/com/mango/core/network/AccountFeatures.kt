@@ -36,6 +36,10 @@ import javax.inject.Singleton
 @Serializable data class CallGrantDto(val url:String,val token:String,val room:String,val iceServers:List<CallIceServerDto> = emptyList(),val relayOnly:Boolean=false)
 
 interface AccountFeaturesApi {
+    @GET("v1/stories") suspend fun stories(@Query("offset") offset:Int):Response<List<StoryDto>>
+    @GET("v1/stories/{id}/image") suspend fun storyImage(@Path("id") id:String):Response<StoryImageDto>
+    @POST("v1/stories") suspend fun publishStory(@Body body:StoryCreateDto):Response<Unit>
+    @DELETE("v1/stories/{id}") suspend fun deleteStory(@Path("id") id:String):Response<Unit>
     @GET("v1/support") suspend fun support(@Query("offset") offset:Int):Response<List<SupportTicketDto>>
     @GET("v1/support/{id}") suspend fun supportMessages(@Path("id") id:String,@Query("before") before:Long?):Response<List<SupportMessageDto>>
     @POST("v1/support") suspend fun createSupport(@Body body:SupportCreateDto):Response<ReportResultDto>
@@ -43,6 +47,7 @@ interface AccountFeaturesApi {
     @POST("v1/conversations/{id}/call/join") suspend fun joinCall(@Path("id") id:String):Response<CallGrantDto>
     @POST("v1/users/me/promos") suspend fun redeemPromo(@Body code:ReferralCodeDto):Response<PromoResultDto>
     @GET("v1/users/me/contacts") suspend fun cloudContacts():Response<List<CloudContactDto>>
+    @DELETE("v1/users/me/contacts/{id}") suspend fun removeCloudContact(@Path("id") id:String):Response<Unit>
     @POST("v1/users/me/contacts/sync") suspend fun syncContacts(@Body batch:CloudContactsBatchDto):Response<ContactsSavedDto>
     @POST("v1/nearby") suspend fun nearbyPublish(@Body location:NearbyLocationDto):Response<NearbyVisibilityDto>
     @GET("v1/nearby") suspend fun nearby():Response<List<NearbyPersonDto>>
@@ -63,6 +68,10 @@ interface AccountFeaturesApi {
 }
 
 @Singleton class AccountFeaturesRemote @Inject constructor(private val api:AccountFeaturesApi) {
+    suspend fun stories(offset:Int=0)=apiCall{api.stories(offset)}
+    suspend fun storyImage(id:String)=apiCall{api.storyImage(id)}
+    suspend fun publishStory(id:String,image:String)=apiCall{api.publishStory(StoryCreateDto(id,image))}
+    suspend fun deleteStory(id:String)=apiCall{api.deleteStory(id)}
     suspend fun support(offset:Int=0)=apiCall{api.support(offset)}
     suspend fun supportMessages(id:String,before:Long?=null)=apiCall{api.supportMessages(id,before)}
     suspend fun createSupport(body:SupportCreateDto)=apiCall{api.createSupport(body)}
@@ -70,6 +79,7 @@ interface AccountFeaturesApi {
     suspend fun joinCall(id:String)=apiCall{api.joinCall(id)}
     suspend fun redeemPromo(code:String)=apiCall{api.redeemPromo(ReferralCodeDto(code))}
     suspend fun cloudContacts()=apiCall{api.cloudContacts()}
+    suspend fun removeCloudContact(id:String)=apiCall{api.removeCloudContact(id)}
     suspend fun syncContacts(items:List<CloudContactDto>)=apiCall{api.syncContacts(CloudContactsBatchDto(items.map{it.copy(updatedAt=null)}))}
     suspend fun nearbyPublish(latitude:Double,longitude:Double) = apiCall { api.nearbyPublish(NearbyLocationDto(latitude,longitude)) }
     suspend fun nearby() = apiCall { api.nearby() }

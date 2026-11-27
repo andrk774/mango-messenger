@@ -15,10 +15,10 @@ import java.util.Locale
  */
 object TimeFormatters {
 
-    private val timeOnly = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
-    private val dayAndMonth = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
-    private val fullDate = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault())
-    private val fullDateTime = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.getDefault())
+    private val timeOnly get() = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+    private val dayAndMonth get() = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
+    private val fullDate get() = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault())
+    private val fullDateTime get() = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.getDefault())
 
     /**
      * Метка для списка чатов: сегодня — время, на этой неделе — день недели,

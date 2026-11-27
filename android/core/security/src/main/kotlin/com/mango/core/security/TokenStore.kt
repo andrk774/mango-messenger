@@ -69,6 +69,8 @@ class EncryptedTokenStore @Inject constructor(
     private val _tokens = MutableStateFlow<AuthTokens?>(null)
     override val tokens: StateFlow<AuthTokens?> = _tokens.asStateFlow()
 
+    // KTX edit returns Unit; the durable commit result must be checked before publishing tokens.
+    @android.annotation.SuppressLint("UseKtx")
     override suspend fun save(tokens: AuthTokens) {
         val encoded = listOf(
             tokens.accessToken,
@@ -80,10 +82,10 @@ class EncryptedTokenStore @Inject constructor(
         val encrypted = crypto.encrypt(encoded)
         // Старый формат удаляется той же записью, что и пишется новый:
         // при сбое между ними осталась бы прежняя сессия без владельца.
-        preferences.edit()
+        check(preferences.edit()
             .putString(KEY_PAYLOAD_V2, Base64.encodeToString(encrypted, Base64.NO_WRAP))
             .remove(KEY_PAYLOAD_V1)
-            .commit() // commit, не apply: потеря токенов при падении недопустима
+            .commit()) { "Could not persist session" }
         _tokens.value = tokens
     }
 
@@ -139,8 +141,10 @@ class EncryptedTokenStore @Inject constructor(
         return null
     }
 
+    // Logout must verify persistence; KTX edit discards the commit result.
+    @android.annotation.SuppressLint("UseKtx")
     private fun clearStored() {
-        preferences.edit().remove(KEY_PAYLOAD_V2).remove(KEY_PAYLOAD_V1).commit()
+        check(preferences.edit().remove(KEY_PAYLOAD_V2).remove(KEY_PAYLOAD_V1).commit()) { "Could not clear session" }
         _tokens.value = null
     }
 

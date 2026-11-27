@@ -102,8 +102,8 @@ class AttachmentFileStore @Inject constructor(
         val digest = MessageDigest.getInstance("SHA-256")
         var total = 0L
         try {
-            val input = resolver.openInputStream(uri) ?: throw IOException("файл недоступен")
-            input.use { source ->
+            resolver.openInputStream(uri).use { source ->
+                if (source == null) throw IOException("файл недоступен")
                 target.outputStream().use { out ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {

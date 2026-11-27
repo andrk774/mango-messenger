@@ -17,8 +17,11 @@ import kotlinx.serialization.json.*
 fun Route.webRoutes(database:Database,limiter:com.mango.backend.common.RateLimiter=com.mango.backend.common.InMemoryRateLimiter(com.mango.backend.common.SystemTime),calls:CallSettingsStore?=null) {
     referralRoutes(database)
     promoContactRoutes(database)
+    storyRoutes(database)
     callRoutes(database,limiter=limiter,provider={calls?.current()?:CallConfig.load()})
     for ((path,file,type) in listOf(
+        Triple("/web/stories.js","stories.js","application/javascript"),
+        Triple("/web/stories.css","stories.css","text/css"),
         Triple("/web/mango-mark.svg","mango-mark.svg","image/svg+xml"),
         Triple("/web/admin-sso.js","admin-sso.js","application/javascript"),
         Triple("/web/browser-session.js","browser-session.js","application/javascript"),

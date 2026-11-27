@@ -1,5 +1,6 @@
 package com.mango.messenger.ui.settings
 
+import androidx.core.graphics.scale
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
@@ -39,7 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -185,7 +186,7 @@ class SettingsViewModel @Inject constructor(
                     val options=android.graphics.BitmapFactory.Options().apply {inSampleSize=(maxOf(bounds.outWidth,bounds.outHeight)/512).coerceAtLeast(1)}
                     val bitmap=android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,options) ?: error("Не удалось прочитать фото")
                     val ratio=512.0/maxOf(bitmap.width,bitmap.height).coerceAtLeast(512)
-                    val scaled=android.graphics.Bitmap.createScaledBitmap(bitmap,(bitmap.width*ratio).toInt().coerceAtLeast(1),(bitmap.height*ratio).toInt().coerceAtLeast(1),true)
+                    val scaled=bitmap.scale((bitmap.width*ratio).toInt().coerceAtLeast(1),(bitmap.height*ratio).toInt().coerceAtLeast(1),true)
                     val out=java.io.ByteArrayOutputStream()
                     scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG,80,out)
                     if(scaled!==bitmap)scaled.recycle()

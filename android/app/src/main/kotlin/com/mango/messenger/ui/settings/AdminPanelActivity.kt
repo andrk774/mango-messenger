@@ -1,5 +1,6 @@
 package com.mango.messenger.ui.settings
 
+import androidx.core.net.toUri
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.View
@@ -61,8 +62,8 @@ class AdminPanelActivity : ComponentActivity() {
             setPadding(16, 16, 16, 16)
             fitsSystemWindows = true
         }
-        content.addView(Button(this).apply { text = "‹ Вернуться в Mango"; setOnClickListener { finish() } })
-        status = TextView(this).apply { text = "Проверяем права доступа…"; setPadding(12, 12, 12, 12) }
+        content.addView(Button(this).apply { setText(com.mango.messenger.R.string.adminpanelactivity_text_0); setOnClickListener { finish() } })
+        status = TextView(this).apply { setText(com.mango.messenger.R.string.adminpanelactivity_text_1); setPadding(12, 12, 12, 12) }
         content.addView(status)
         setContentView(content)
         lifecycleScope.launch {
@@ -73,18 +74,18 @@ class AdminPanelActivity : ComponentActivity() {
                     val result = if (user != null) account.adminAccess() else null
                     val stillCurrent = user != null && user == database.userDao().currentUserId()
                     if (stillCurrent && result is Outcome.Success && hasAdminPanelAccess(result.value.role)) {
-                        if (sessionUser != user.toString()) { releaseWeb(); sessionUser = user.toString() }
+                        if (sessionUser != user) { releaseWeb(); sessionUser = user }
                         if (web == null) showPanel()
                     } else {
                         releaseWeb()
                         status.visibility = View.VISIBLE
-                        status.text = if (user == null) "Войдите в Mango." else "Доступ не подтверждён. Панель доступна только владельцу, администратору и модератору. Проверьте соединение или вернитесь в настройки."
+                        status.setText(if (user == null) com.mango.messenger.R.string.admin_login_required else com.mango.messenger.R.string.admin_access_unconfirmed)
                     }
                     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                     catch (_: Exception) {
                         releaseWeb()
                         status.visibility = View.VISIBLE
-                        status.text = "Не удалось проверить права доступа. Вернитесь в Mango и попробуйте снова."
+                        status.setText(com.mango.messenger.R.string.admin_status_0)
                     }
                     delay(30_000)
                 }
@@ -95,7 +96,7 @@ class AdminPanelActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun showPanel() {
         status.visibility = View.VISIBLE
-        status.text = "Открываем админ-панель…"
+        status.setText(com.mango.messenger.R.string.admin_status_1)
         val view = WebView(this)
         web = view
         view.settings.apply {
@@ -125,9 +126,9 @@ class AdminPanelActivity : ComponentActivity() {
                     plainClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
                         .newCall(Request.Builder().url(request.url.toString()).build()).execute().use { response ->
                             if (response.code !in 200..299) throw IllegalStateException()
-                            WebResourceResponse(response.body?.contentType()?.let { "${it.type}/${it.subtype}" } ?: "text/plain", "UTF-8",
+                            WebResourceResponse(response.body.contentType()?.let { "${it.type}/${it.subtype}" } ?: "text/plain", "UTF-8",
                                 response.code, "OK", response.headers.toMultimap().mapValues { it.value.joinToString(",") },
-                                ByteArrayInputStream(response.body?.bytes() ?: ByteArray(0)))
+                                ByteArrayInputStream(response.body.bytes()))
                         }
                 } catch (_: Exception) {
                     WebResourceResponse("text/plain", "UTF-8", 503, "Unavailable", emptyMap(), ByteArrayInputStream("Сервер недоступен. Вернитесь и попробуйте снова.".toByteArray()))
@@ -136,7 +137,7 @@ class AdminPanelActivity : ComponentActivity() {
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
-                    status.text = "Не удалось открыть сервер. Проверьте Wi-Fi и доступность имени сервера. Вернитесь в Mango и откройте панель снова."
+                    status.setText(com.mango.messenger.R.string.admin_status_2)
                     status.visibility = View.VISIBLE
                 }
             }
@@ -165,11 +166,11 @@ class AdminPanelActivity : ComponentActivity() {
                         check(web === view && channel === port && view.url == policy.entryUrl)
                         check(expectedUser != null && session.currentUserId() == expectedUser)
                         check(policy.allowsApi(path, method))
-                        val body = if (method == "GET") null else input.opt("body").toString().toRequestBody("application/json".toMediaType())
+                        val body = if (method == "GET") null else (input.opt("body") ?: JSONObject.NULL).toString().toRequestBody("application/json".toMediaType())
                         val response = withContext(Dispatchers.IO) {
                             apiClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
                                 .newCall(Request.Builder().url(BuildConfig.SERVER_URL.trimEnd('/') + "/v1" + path).method(method,body).build()).execute().use {
-                                    it.code to (it.body?.string() ?: "null")
+                                    it.code to (it.body.string())
                                 }
                         }
                         reply.put("status",response.first)
@@ -180,7 +181,7 @@ class AdminPanelActivity : ComponentActivity() {
                 }
             }
         })
-        val origin = Uri.parse(BuildConfig.SERVER_URL).buildUpon().path("").query(null).fragment(null).build()
+        val origin = BuildConfig.SERVER_URL.toUri().buildUpon().path("").query(null).fragment(null).build()
         view.postWebMessage(WebMessage("mango-native-admin",arrayOf(ports[1])),origin)
         status.visibility = View.GONE
     }

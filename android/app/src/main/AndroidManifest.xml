@@ -16,6 +16,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <application
         android:name=".MangoApplication"
         android:allowBackup="false"
@@ -71,6 +73,8 @@
           картинок). Доступ — только к каталогам вложений и только на
           время открытия: флаг FLAG_GRANT_READ_URI_PERMISSION.
         -->
+        <receiver android:name=".push.NotificationActionReceiver" android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

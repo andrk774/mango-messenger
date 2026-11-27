@@ -14,7 +14,7 @@ const emojis=['👍','👎','❤️','😂','😮','😢','🙏','🔥','🎉','
 function toast(s){$('toast').textContent=s;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),6000);}
 function btn(text,fn,cls){const b=node('button',text,cls);b.type='button';b.onclick=async()=>{b.disabled=true;try{await fn();}catch(e){toast(e.message);}finally{b.disabled=false;}};return b;}
 function date(s){return s?new Date(s).toLocaleString('ru-RU'):'Без срока';}
-function modal(title){$('modal').classList.toggle('task-drawer',title==='Задача'&&screen==='boards');$('modal-title').textContent=title;$('modal-body').replaceChildren();if(!$('modal').open)$('modal').showModal();return $('modal-body');}
+function modal(title){$('modal').classList.remove('story-modal');$('modal').classList.toggle('task-drawer',title==='Задача'&&screen==='boards');$('modal-title').textContent=title;$('modal-body').replaceChildren();if(!$('modal').open)$('modal').showModal();return $('modal-body');}
 $('modal-close').onclick=()=>$('modal').close();
 function field(form,name,title,value='',type='text',required=true){const l=node('label',title),i=node(type==='textarea'?'textarea':'input');if(type!=='textarea')i.type=type;i.name=name;i.value=value??'';i.required=required;l.append(i);form.append(l);return i;}
 function choose(form,name,title,options,value){const l=node('label',title),s=node('select');s.name=name;for(const [k,t]of options){const o=node('option',t);o.value=k;s.append(o);}s.value=value;l.append(s);form.append(l);return s;}

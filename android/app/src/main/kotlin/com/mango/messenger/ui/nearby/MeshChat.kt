@@ -46,13 +46,13 @@ class MeshChat(context:Context) {
             }catch(_:Exception){if(session.isActive)status.value="Wi-Fi недоступен. Можно использовать Bluetooth"}
         }
     }
-    fun paired() {runCatching{check(adapter?.isEnabled==true);peers.value=adapter!!.bondedDevices.sortedBy{it.address}}.onFailure{status.value="Включите Bluetooth и разрешите доступ"}}
+    fun paired() {runCatching{check(adapter?.isEnabled==true);peers.value=adapter.bondedDevices.sortedBy{it.address}}.onFailure{status.value="Включите Bluetooth и разрешите доступ"}}
     fun listenBluetooth() {
         val session=scope?:return
         session.launch {
             try {
                 check(adapter?.isEnabled==true)
-                val server=adapter!!.listenUsingRfcommWithServiceRecord("Mango mesh",service);resources.add(server)
+                val server=adapter.listenUsingRfcommWithServiceRecord("Mango mesh",service);resources.add(server)
                 if(!isActive){server.close();return@launch}
                 status.value="Ожидаю сопряжённые телефоны по Bluetooth"
                 while(isActive){val socket=server.accept();if(socket.remoteDevice.bondState!=BluetoothDevice.BOND_BONDED||links.size>=8)socket.close() else attach(session,socket,socket.inputStream,socket.outputStream)}

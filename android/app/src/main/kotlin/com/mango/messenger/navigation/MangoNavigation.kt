@@ -46,7 +46,7 @@ object Routes {
 /** Пункт нижней навигации. */
 data class TopLevelDestination(
     val route: String,
-    val label: String,
+    @androidx.annotation.StringRes val label: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
 )
@@ -54,19 +54,19 @@ data class TopLevelDestination(
 val topLevelDestinations = listOf(
     TopLevelDestination(
         route = Routes.CHATS,
-        label = "Чаты",
+        label = com.mango.messenger.R.string.nav_chats,
         selectedIcon = Icons.AutoMirrored.Filled.Chat,
         unselectedIcon = Icons.AutoMirrored.Outlined.Chat,
     ),
     TopLevelDestination(
         route = Routes.TASKS,
-        label = "Задачи",
+        label = com.mango.messenger.R.string.nav_tasks,
         selectedIcon = Icons.Filled.Checklist,
         unselectedIcon = Icons.Outlined.Checklist,
     ),
     TopLevelDestination(
         route = Routes.SETTINGS,
-        label = "Настройки",
+        label = com.mango.messenger.R.string.nav_settings,
         selectedIcon = Icons.Filled.Settings,
         unselectedIcon = Icons.Outlined.Settings,
     ),

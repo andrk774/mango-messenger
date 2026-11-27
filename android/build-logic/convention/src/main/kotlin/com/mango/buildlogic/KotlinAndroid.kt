@@ -7,7 +7,7 @@ import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.dependencies
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension
+import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidExtension
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 
 /**
@@ -16,23 +16,24 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
  * Все значения берутся из version catalog, чтобы не было рассинхрона между модулями.
  */
 internal fun Project.configureKotlinAndroid(
-    commonExtension: CommonExtension<*, *, *, *, *, *>,
+    commonExtension: CommonExtension,
 ) {
     commonExtension.apply {
         compileSdk = libs.intVersion("compileSdk")
+        compileSdkMinor = libs.intVersion("compileSdkMinor")
         buildToolsVersion = libs.version("buildTools")
 
-        defaultConfig {
+        defaultConfig.apply {
             minSdk = libs.intVersion("minSdk")
         }
 
-        compileOptions {
+        compileOptions.apply {
             sourceCompatibility = JavaVersion.VERSION_17
             targetCompatibility = JavaVersion.VERSION_17
             isCoreLibraryDesugaringEnabled = false
         }
 
-        packaging {
+        packaging.apply {
             resources {
                 excludes += setOf(
                     "/META-INF/{AL2.0,LGPL2.1}",
@@ -43,7 +44,7 @@ internal fun Project.configureKotlinAndroid(
             }
         }
 
-        testOptions {
+        testOptions.apply {
             unitTests {
                 isIncludeAndroidResources = true
                 isReturnDefaultValues = true
@@ -51,7 +52,7 @@ internal fun Project.configureKotlinAndroid(
         }
     }
 
-    extensions.configure<KotlinAndroidProjectExtension> {
+    extensions.configure<KotlinAndroidExtension> {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
             configureKotlinCompilerArgs(freeCompilerArgs)

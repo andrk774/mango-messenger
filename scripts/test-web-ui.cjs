@@ -21,6 +21,8 @@ routes['/web/calls-ui.js']='web/calls-ui.js';
 routes['/web/chat-live.js']='web/chat-live.js';
 routes['/web/kanban.js']='web/kanban.js';
 routes['/web/media.js']='web/media.js';
+routes['/web/stories.js']='web/stories.js';
+routes['/web/stories.css']='web/stories.css';
 routes['/admin/kubernetes.js']='admin/kubernetes.js';
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 const server = http.createServer((req,res) => {
@@ -39,12 +41,19 @@ let externalProfiles=[];
 let promos=[];
 let auditCleared=false;
 let boardFixture=null;
+let storyFixture=null;
 let tasks = [], sends = [], mutations = [], failFirstSend = true;
 const welcomeTasks=['AVATAR','INVITE','CHAT','TASK'].map(kind=>({kind,status:'PENDING'}));
 const violations = [];
 async function fixture(route) {
  const req = route.request(), url = new URL(req.url()), p = url.pathname, method = req.method(), body = req.postDataJSON();
  let result = {}, status = 200;
+ if(p==='/v1/stories') {
+  if(method==='POST'){assert.match(body.image,/^[A-Za-z0-9+/=]+$/);storyFixture={...body,ownerId:user.id,displayName:user.displayName,mine:true,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()};result={};}
+  else result=storyFixture?[storyFixture]:[];
+  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(result)});
+ }
+ if(p.startsWith('/v1/stories/')) {if(method==='DELETE'){storyFixture=null;result={};}else result={image:storyFixture.image};return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(result)});}
  if (method !== 'GET') mutations.push({p,body});
  if(p==='/v1/boards') {if(method==='GET')result={items:boardFixture?[boardFixture]:[]};else{boardFixture={...body,ownerId:user.id,version:1,unread:0,columns:[{id:'todo',title:'Todo'},{id:'doing',title:'Doing'},{id:'done',title:'Done'}],cards:[],tasks,events:[]};result=boardFixture;}}
  else if(p.startsWith('/v1/boards/')) {if(method==='POST'&&!p.endsWith('/read')){assert.equal(body.version,boardFixture.version);if(body.op==='place'){boardFixture.cards=boardFixture.cards.filter(c=>c.taskId!==body.taskId);boardFixture.cards.push({...body,position:body.position||0});}if(body.op==='settings'){boardFixture.title=body.title;boardFixture.columns=body.columns;}boardFixture.version++;}result={...boardFixture,tasks};}
@@ -260,6 +269,25 @@ async function run() {
   await page.goto(base+'/');await noOverflow(page);await page.screenshot({path:path.join(out,'homepage-desktop.png'),fullPage:true});
   await page.getByRole('link',{name:'Войти в веб-версию'}).click();
   await login(page,'#auth-form');await page.locator('#app').waitFor({state:'visible'});
+  await page.getByRole('button',{name:'Истории',exact:true}).click();
+  await page.getByText('Историй пока нет.',{exact:false}).waitFor();
+  await page.screenshot({path:path.join(out,'stories-home-fixture.png'),fullPage:true});
+  await page.getByRole('button',{name:'＋ Добавить фото',exact:true}).click();
+  const storyPng=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=360;c.height=640;const x=c.getContext('2d');x.fillStyle='#285642';x.fillRect(0,0,360,640);return c.toDataURL('image/png').split(',')[1];});
+  await page.locator('#modal input[type=file]').setInputFiles({name:'story.png',mimeType:'image/png',buffer:Buffer.from(storyPng,'base64')});
+  await page.locator('#modal canvas').waitFor({state:'visible'});
+  await page.getByRole('button',{name:'👑',exact:true}).click();
+  await page.getByLabel('Подпись-наклейка',{exact:true}).fill('Моя история Mango');
+  await page.getByRole('button',{name:'Добавить текст',exact:true}).click();
+  await page.locator('#modal').evaluate(el=>{el.scrollTop=0;});
+  await page.screenshot({path:path.join(out,'stories-editor-fixture.png'),fullPage:true});
+  await page.getByRole('button',{name:'Опубликовать на 24 часа',exact:true}).click();
+  await page.getByRole('button',{name:/Моя история/}).click();
+  await page.locator('.story-image').waitFor({state:'visible'});
+  assert.equal(await page.locator('.story-image').evaluate(i=>i.complete&&i.naturalWidth===360),true);
+  await page.getByRole('button',{name:'Скрыть мою историю',exact:true}).click();
+  await page.getByText('Историй пока нет.',{exact:false}).waitFor();
+  await page.locator('#modal-close').click();
   await page.locator('#welcome').click();
   await page.locator('#modal .task-card').first().click();
   await page.screenshot({path:path.join(out,'welcome-avatar-fixture.png'),fullPage:true});
@@ -434,7 +462,8 @@ async function run() {
   await page.locator('.app-header').screenshot({path:path.join(out,'navigation-icons-mobile.png')});
   await page.goto(base+'/');await noOverflow(page);await page.screenshot({path:path.join(out,'homepage-mobile.png'),fullPage:true});
   await page.setViewportSize({width:1365,height:900});await page.goto(base+'/admin/');
-  await page.goto(base+'/admin/');await login(page,'#login-form');
+  // The existing browser session must also restore the standalone admin panel.
+  await page.goto(base+'/admin/');
   await page.locator('#workspace').waitFor({state:'visible'});await page.locator('.cards').waitFor();
   await page.screenshot({path:path.join(out,'admin-desktop-fixture.png'),fullPage:true});
   await page.locator('[data-tab=users]').click();await page.getByRole('button',{name:'Управлять',exact:true}).click();

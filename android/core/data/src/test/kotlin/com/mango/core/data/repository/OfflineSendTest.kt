@@ -578,9 +578,10 @@ class OfflineSendTest {
     /** Защита от случайного использования реального диспетчера в тестах. */
     @Test
     fun `test dispatchers are injected not hardcoded`() {
+        val dispatchers: com.mango.core.common.DispatcherProvider = testDispatchers
         assertTrue(
             "Репозитории обязаны использовать инжектированный диспетчер",
-            testDispatchers.io is kotlinx.coroutines.test.TestDispatcher,
+            dispatchers.io is kotlinx.coroutines.test.TestDispatcher,
         )
     }
 }

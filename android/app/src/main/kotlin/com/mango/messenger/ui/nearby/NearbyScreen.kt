@@ -1,5 +1,6 @@
 package com.mango.messenger.ui.nearby
 
+import androidx.core.content.edit
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
@@ -21,8 +22,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
-import androidx.core.os.CancellationSignal
-import androidx.hilt.navigation.compose.hiltViewModel
+import android.os.CancellationSignal
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -145,11 +146,11 @@ import kotlin.math.round
         title={Text("Показывать вас людям рядом?")},
         text={Text("Ваше имя и username будут видны пользователям примерно в радиусе 10 км. Mango отправляет серверу округлённое местоположение. Видимость будет включаться при открытии этого экрана и выключаться при выходе; при потере сети — в течение 2 минут.")},
         confirmButton={TextButton(enabled=accountId!=null,onClick={
-            accountId?.let {preferences.edit().putBoolean("automatic:$it",true).apply()}
+            accountId?.let {preferences.edit { putBoolean("automatic:$it",true) }}
             automatic=true;consentDialog=false;requestLocation()
         }) {Text("Согласен, включить")}},
         dismissButton={TextButton(onClick={
-            accountId?.let {preferences.edit().putBoolean("automatic:$it",false).apply()}
+            accountId?.let {preferences.edit { putBoolean("automatic:$it",false) }}
             automatic=false;consentDialog=false
         }) {Text("Не включать")}})
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {signal?.cancel();locating=false;model.hide();bluetooth.close()}
@@ -167,7 +168,7 @@ import kotlin.math.round
             Text("Включая видимость, вы разрешаете показывать ваше имя и username людям поблизости. Сервер получает округлённое местоположение. Координаты и расстояние другим не показываются.")
             Text(status)
             if(automatic) TextButton(onClick={
-                accountId?.let {preferences.edit().putBoolean("automatic:$it",false).apply()}
+                accountId?.let {preferences.edit { putBoolean("automatic:$it",false) }}
                 automatic=false;signal?.cancel();locating=false;model.hide()
             }) {Text("Отключить автоматическую видимость")}
             locationError?.let {Text(it)}

@@ -1,5 +1,5 @@
 import com.android.build.api.dsl.CommonExtension
-import com.android.build.gradle.internal.dsl.BaseAppModuleExtension
+import com.android.build.api.dsl.ApplicationExtension
 import com.mango.buildlogic.libs
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -19,10 +19,10 @@ class AndroidComposeConventionPlugin : Plugin<Project> {
 
         val commonExtension = when {
             pluginManager.hasPlugin("com.android.application") ->
-                extensions.getByType<BaseAppModuleExtension>()
+                extensions.getByType<ApplicationExtension>()
             else ->
-                extensions.getByType<com.android.build.gradle.LibraryExtension>()
-        } as CommonExtension<*, *, *, *, *, *>
+                extensions.getByType<com.android.build.api.dsl.LibraryExtension>()
+        } as CommonExtension
 
         commonExtension.buildFeatures.compose = true
 
@@ -31,7 +31,7 @@ class AndroidComposeConventionPlugin : Plugin<Project> {
         // со scrollBehavior). Аннотировать каждый экран вручную — это шум,
         // который ничего не даёт: отказаться от этих API мы всё равно не можем.
         // Opt-in объявляется один раз здесь.
-        extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension>("kotlin") {
+        extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinAndroidExtension>("kotlin") {
             compilerOptions {
                 freeCompilerArgs.addAll(
                     "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",

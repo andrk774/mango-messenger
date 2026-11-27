@@ -10,6 +10,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
+import androidx.core.net.toUri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -41,7 +43,6 @@ class Notifier @Inject constructor(
 ) {
 
     fun createChannels() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannels(
             listOf(
@@ -53,6 +54,7 @@ class Notifier @Inject constructor(
 
     suspend fun showMessage(conversationId: String, messageId: String) = withContext(Dispatchers.IO) {
         if (!sessionManager.restore()) return@withContext
+        val owner = sessionManager.currentUserId() ?: return@withContext
         val settings = settingsStore.settings.first()
         if (!settings.messageNotificationsEnabled || !canPost()) return@withContext
         // Приложение открыто — сообщение и так видно, звук был бы лишним.
@@ -84,6 +86,19 @@ class Notifier @Inject constructor(
             title = title,
             text = text,
             intent = openIntent(MainActivity.EXTRA_CONVERSATION_ID, conversationId),
+            actions = if (message != null) listOf(
+                NotificationCompat.Action.Builder(0, context.getString(R.string.notification_reply),
+                    actionIntent(NotificationActionReceiver.REPLY, owner, conversationId, messageId, mutable = true))
+                    .addRemoteInput(RemoteInput.Builder(NotificationActionReceiver.INPUT).setLabel(context.getString(R.string.notification_reply_hint)).build())
+                    .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+                    .setAuthenticationRequired(true)
+                    .build(),
+                NotificationCompat.Action.Builder(0, context.getString(R.string.notification_read),
+                    actionIntent(NotificationActionReceiver.READ, owner, conversationId, messageId, mutable = false))
+                    .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ)
+                    .setAuthenticationRequired(true)
+                    .build(),
+            ) else emptyList(),
         )
     }
 
@@ -109,20 +124,37 @@ class Notifier @Inject constructor(
     }
 
     @Suppress("MissingPermission") // проверено в canPost()
-    private fun post(id: Int, channel: String, title: String, text: String, intent: PendingIntent) {
+    private fun post(id: Int, channel: String, title: String, text: String, intent: PendingIntent,
+                     actions: List<NotificationCompat.Action> = emptyList()) {
         // Синхронизация могла отозвать сессию, пока готовилось уведомление.
         if (sessionManager.currentAccessToken() == null) return
         val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setContentIntent(intent)
             // На экране блокировки — без содержимого, если текст скрыт настройкой.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(NotificationCompat.Builder(context, channel)
+                .setSmallIcon(R.drawable.ic_notification).setContentTitle("Mango")
+                .setContentText(context.getString(R.string.notification_hidden)).build())
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .apply { actions.forEach { addAction(it) } }
             .build()
         NotificationManagerCompat.from(context).notify(id, notification)
+    }
+
+    private fun actionIntent(action: String, owner: String, chat: String, message: String, mutable: Boolean): PendingIntent {
+        val intent = Intent(context, NotificationActionReceiver::class.java)
+            .setAction(action)
+            .setData("mango-notification://action/$owner/$chat/${action.substringAfterLast('.')}".toUri())
+            .putExtra(NotificationActionReceiver.OWNER, owner)
+            .putExtra(NotificationActionReceiver.CHAT, chat)
+            .putExtra(NotificationActionReceiver.MESSAGE, message)
+        return PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or
+            if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE)
     }
 
     private fun openIntent(extra: String, value: String): PendingIntent =

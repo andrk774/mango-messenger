@@ -1,5 +1,7 @@
 package com.mango.messenger.ui.settings
 
+import androidx.core.content.edit
+import androidx.core.graphics.createBitmap
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ShortcutInfo
@@ -95,7 +97,7 @@ internal fun decodeAppIcon(context: Context, uri: Uri): Bitmap {
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
             ?: error("Не удалось прочитать изображение")
     }
-    val output = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+    val output = createBitmap(256, 256)
     val side = minOf(source.width, source.height)
     val left = (source.width - side) / 2
     val top = (source.height - side) / 2
@@ -123,7 +125,7 @@ internal fun AppIconSettings() {
                     val image = decodeAppIcon(context, uri)
                     val bytes = ByteArrayOutputStream().also { image.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
                     image.recycle()
-                    check(iconPreferences(context).edit().putString(ICON_KEY, Base64.encodeToString(bytes, Base64.NO_WRAP)).commit()) { "Не удалось сохранить иконку" }
+                    check(persistIcon(context, bytes)) { "Не удалось сохранить иконку" }
                 }
                 message = "Иконка внутри Mango изменена. Можно добавить её на рабочий стол."
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -153,7 +155,12 @@ internal fun AppIconSettings() {
             } catch (_: Exception) { message = "Не удалось добавить ярлык. Попробуйте, когда телефон разблокирован." }
         }, enabled = !busy) { Text("Добавить / обновить ярлык") }
         Text("Ярлык открывает Mango. В списке приложений остаётся основная иконка с манго; Android может добавить к ярлыку маленький значок приложения.", style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = { iconPreferences(context).edit().remove(ICON_KEY).apply(); message = "Восстановлена стандартная иконка. Для изменения ярлыка нажмите «Добавить / обновить ярлык»." }, enabled = !busy && bitmap != null) { Text("Вернуть стандартную") }
+        TextButton(onClick = { iconPreferences(context).edit { remove(ICON_KEY) }; message = "Восстановлена стандартная иконка. Для изменения ярлыка нажмите «Добавить / обновить ярлык»." }, enabled = !busy && bitmap != null) { Text("Вернуть стандартную") }
         message?.let { Text(it) }
     }
 }
+
+// KTX edit returns Unit; keep the commit result so failed disk writes are reported.
+@android.annotation.SuppressLint("UseKtx")
+private fun persistIcon(context: Context, bytes: ByteArray): Boolean =
+    iconPreferences(context).edit().putString(ICON_KEY, Base64.encodeToString(bytes, Base64.NO_WRAP)).commit()
