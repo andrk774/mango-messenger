@@ -156,6 +156,7 @@ private fun MangoApp(
     onDeepLinkHandled: () -> Unit,
 ) {
     val navController = rememberNavController()
+    var settingsOpenRequest by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
 
@@ -192,7 +193,10 @@ private fun MangoApp(
                                 indicatorColor=androidx.compose.ui.graphics.Color.Transparent,
                             ),
                             selected = selected,
-                            onClick = { navController.navigateToTopLevel(destination.route) },
+                            onClick = {
+                                if (destination.route == Routes.SETTINGS) settingsOpenRequest++
+                                navController.navigateToTopLevel(destination.route)
+                            },
                             icon = {
                                 Icon(
                                     imageVector = if (selected) {
@@ -257,7 +261,11 @@ private fun MangoApp(
                 )
             }
             composable(Routes.SETTINGS) {
-                SettingsScreen(onSignOut = onSignOut, onContacts={navController.navigate(Routes.CONTACTS)}, onNotifications={navController.navigate(Routes.NOTIFICATIONS)}, modifier = Modifier.padding(padding))
+                SettingsScreen(onSignOut = onSignOut, onContacts={navController.navigate(Routes.CONTACTS)}, onNotifications={navController.navigate(Routes.NOTIFICATIONS)}, onNearby={navController.navigate(Routes.NEARBY)}, openRootRequest=settingsOpenRequest, modifier = Modifier.padding(padding))
+            }
+            composable(Routes.NEARBY) {
+                com.mango.messenger.ui.nearby.NearbyScreen(onBack={navController.popBackStack()},
+                    onConversation={navController.navigate(Routes.conversation(it))},modifier=Modifier.padding(padding))
             }
 
             composable(Routes.CONVERSATION) {

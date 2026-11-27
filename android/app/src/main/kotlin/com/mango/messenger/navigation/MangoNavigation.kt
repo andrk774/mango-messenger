@@ -25,6 +25,7 @@ object Routes {
     const val CONTACTS = "contacts"
     const val NOTIFICATIONS = "notifications"
     const val SETTINGS = "settings"
+    const val NEARBY = "nearby"
 
     /** Экран переписки. Реализуется на Этапе 4. */
     const val CONVERSATION = "conversation/{conversationId}"

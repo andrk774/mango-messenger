@@ -54,6 +54,8 @@ import com.mango.backend.sync.SyncService
 import com.mango.backend.sync.syncRoutes
 import com.mango.backend.tasks.TaskService
 import com.mango.backend.tasks.TasksRepository
+import com.mango.backend.tasks.KanbanService
+import com.mango.backend.tasks.kanbanRoutes
 import com.mango.backend.tasks.tasksRoutes
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -79,7 +81,10 @@ import java.util.UUID
 
 private val log = LoggerFactory.getLogger("MangoBackend")
 
-fun main() {
+fun main(args: Array<String>) {
+    if (args.isNotEmpty()) {
+        kotlin.system.exitProcess(runOwnerCommand(args))
+    }
     val config = AppConfig.load()
     log.info("запуск Mango backend, окружение {}", config.environment)
 
@@ -189,6 +194,8 @@ fun Application.mangoModule(
     val passwordHasher = PasswordHasher(config.password)
     val authRepository = AuthRepository()
     val adminService = AdminService(database, config, time)
+    val callSettings = if(config.environment == AppConfig.Environment.TEST) CallSettingsStore(database, ByteArray(32){43}) else CallSettingsStore(database)
+    kotlinx.coroutines.runBlocking { adminService.migrateSmtpKey() }
 
     // Журнал событий — основа синхронизации. Рассылка в реальном времени
     // подключается отдельно: её отсутствие не теряет события, клиент
@@ -331,6 +338,7 @@ fun Application.mangoModule(
 
     routing {
         healthRoutes(database)
+        nearbyRoutes(database, time, rateLimiter)
         authRoutes(
             authService,
             database,
@@ -348,8 +356,13 @@ fun Application.mangoModule(
             !revocations.isRevoked(claims.sessionId) && database.readOnly { it.accountSessionAllowed(claims.userId, claims.sessionId) }
         }
         adminRoutes(adminService)
-        webRoutes(database)
+        kubernetesApiRoutes(adminService)
+        supportRoutes(database,adminService,rateLimiter)
+        analyticsRoutes(database,adminService,callSettings)
+        callSettingsRoutes(adminService,callSettings)
+        webRoutes(database,rateLimiter,callSettings)
         tasksRoutes(taskService)
+        kanbanRoutes(KanbanService(database))
         attachmentsRoutes(attachmentService)
         transcriptRoutes(TranscriptService(database,attachmentService))
         notificationsRoutes(pushService)

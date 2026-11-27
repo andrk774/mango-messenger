@@ -1,7 +1,6 @@
 [versions]
-# Kotlin взят ровно тот, которым собран Ktor 3.6.1 (его kotlin-stdlib = 2.3.21).
-# Это снимает риск несовпадения метаданных компилятора.
-kotlin = "2.3.21"
+# Security update: Kotlin 2.4.20; compatibility is checked by backend tests.
+kotlin = "2.4.20"
 ktor = "3.6.1"
 coroutines = "1.11.0"
 serialization = "1.13.0"

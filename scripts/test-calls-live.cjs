@@ -1,0 +1,25 @@
+// Real SFU + browser WebRTC test. Synthetic microphones/cameras, no personal media.
+const {chromium}=require(process.argv[2]||'playwright');
+const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),crypto=require('node:crypto'),cp=require('node:child_process'),assert=require('node:assert/strict');
+const root=path.resolve(__dirname,'../backend/app/src/main/resources/web'),out=path.resolve(__dirname,'../artifacts/calls-live');fs.mkdirSync(out,{recursive:true});
+const secret=crypto.randomBytes(32).toString('hex'),key='mango-test',name='mango-call-test-'+crypto.randomUUID().slice(0,8),room='mango-test-room';
+const config=path.join(out,'livekit-test.yaml');
+fs.writeFileSync(config,`port: 7880\nbind_addresses: ["0.0.0.0"]\nrtc:\n  tcp_port: 7881\n  udp_port: 7882\n  use_external_ip: false\n  node_ip: 127.0.0.1\nkeys:\n  ${key}: ${secret}\nroom:\n  max_participants: 12\n`);
+const docker=process.env.DOCKER_EXE||'C:/Users/andrk/AppData/Local/Programs/DockerDesktop/resources/bin/docker.exe';
+function token(i){const now=Math.floor(Date.now()/1000),part=x=>Buffer.from(JSON.stringify(x)).toString('base64url');const content=part({alg:'HS256',typ:'JWT'})+'.'+part({iss:key,sub:'browser-'+i,name:'Участник '+i,nbf:now-5,exp:now+180,video:{roomJoin:true,room,canPublish:true,canSubscribe:true,canPublishData:false,canPublishSources:['camera','microphone']}});return content+'.'+crypto.createHmac('sha256',secret).update(content).digest('base64url');}
+const server=http.createServer((req,res)=>{const file=path.basename(new URL(req.url,'http://localhost').pathname);if(!['call.html','call.js','call.css','livekit-client.umd.js'].includes(file)){res.writeHead(404).end();return;}res.setHeader('Content-Type',file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' ws://127.0.0.1:7880 http://127.0.0.1:7880; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self'");res.end(fs.readFileSync(path.join(root,file)));});
+let browser,started=false;
+(async()=>{cp.execFileSync(docker,['run','--rm','-d','--name',name,'-p','127.0.0.1:7880:7880','-p','127.0.0.1:7881:7881','-p','127.0.0.1:7882:7882/udp','-v',config+':/config.yaml:ro','livekit/livekit-server:v1.13.11','--config','/config.yaml'],{stdio:'pipe'});started=true;
+ for(let i=0;i<30;i++){try{const r=await fetch('http://127.0.0.1:7880');if(r.ok)break;}catch{}await new Promise(r=>setTimeout(r,1000));}
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
+ browser=await chromium.launch({headless:true,executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--autoplay-policy=no-user-gesture-required']});
+ const pages=[];for(let i=1;i<=3;i++){const ctx=await browser.newContext({viewport:{width:1100,height:800},permissions:['camera','microphone']});const page=await ctx.newPage();pages.push(page);await page.goto(base+'/call.html');await page.evaluate(grant=>startMangoCall(grant),{url:'ws://127.0.0.1:7880',token:token(i),video:true});await page.locator('#join').click();await page.waitForFunction(()=>document.querySelector('#status').textContent==='Вы в звонке',{},{timeout:30000});}
+ for(const page of pages){await page.waitForFunction(()=>document.querySelectorAll('.participant').length===3&&[...document.querySelectorAll('video')].filter(v=>v.videoWidth>0).length===3&&[...document.querySelectorAll('audio')].filter(a=>a.readyState>=2&&a.currentTime>0).length===2,{},{timeout:30000});assert.equal(await page.locator('audio').count(),2);}
+ await pages[0].screenshot({path:path.join(out,'group-video.png')});
+ await pages[0].setViewportSize({width:390,height:844});await pages[0].screenshot({path:path.join(out,'group-video-mobile.png'),fullPage:true});
+ await pages[0].locator('#camera').click();assert.equal(await pages[0].locator('#camera').getAttribute('aria-pressed'),'false');
+ await pages[0].locator('#mic').click();assert.equal(await pages[0].locator('#mic').getAttribute('aria-pressed'),'false');
+ await pages[0].locator('#leave').click();await pages[1].waitForFunction(()=>document.querySelectorAll('.participant').length===2);
+ await pages[1].screenshot({path:path.join(out,'two-participants.png')});
+ fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({ok:true,checks:['three real WebRTC clients','decoded remote video','remote audio tracks','camera off','microphone off','leave propagation'],syntheticMedia:true},null,2));console.log('PASS: 3 participants, real SFU, synthetic audio/video, controls and leave');
+})().catch(e=>{console.error(e.message);process.exitCode=1;}).finally(async()=>{await browser?.close();server.close();if(started){fs.writeFileSync(path.join(out,'server.log'),cp.execFileSync(docker,['logs',name],{encoding:'utf8',stdio:['pipe','pipe','pipe']}));cp.execFileSync(docker,['stop',name],{stdio:'pipe'});}});

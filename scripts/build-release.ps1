@@ -1,7 +1,8 @@
 param(
     [string]$ServerUrl = 'https://mango.home.arpa/',
     [string]$ServerIp = '192.168.1.121',
-    [string]$Jdk = 'C:\Program Files\Android\Android Studio\jbr'
+    [string]$Jdk = 'C:\Program Files\Android\Android Studio\jbr',
+    [switch]$Offline
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -32,8 +33,18 @@ try {
         & "$Jdk/bin/keytool.exe" -genkeypair -storetype PKCS12 -keystore $keystore -alias mango-release -keyalg RSA -keysize 3072 -validity 10000 -dname 'CN=Mango Local Release' -storepass:env MANGO_KEYSTORE_PASSWORD -keypass:env MANGO_KEY_PASSWORD
         if ($LASTEXITCODE -ne 0) { throw 'Key generation failed. Existing files preserved for inspection.' }
     }
-    & "$root/android/gradlew.bat" -p "$root/android" :app:assembleRelease "-Pmango.serverUrl=$ServerUrl" "-Pmango.serverIp=$ServerIp" --console=plain
-    if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
+    $gradleArguments = @('-p', "$root/android", ':app:assembleRelease', "-Pmango.serverUrl=$ServerUrl", "-Pmango.serverIp=$ServerIp", '--console=plain')
+    if ($Offline) { $gradleArguments += '--offline' }
+    # Windows PowerShell can turn harmless native stderr warnings into terminating errors.
+    $previousErrorPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & "$root/android/gradlew.bat" @gradleArguments
+        $buildExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorPreference
+    }
+    if ($buildExitCode -ne 0) { throw "Release build failed ($buildExitCode)" }
     Write-Output 'Release built. Signing password is protected with Windows DPAPI for this Windows account.'
 } finally {
     $env:JAVA_HOME = $previousJava

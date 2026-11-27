@@ -1,0 +1,10 @@
+from pathlib import Path
+p=Path('backend/app/src/main/resources/web/app.js')
+s=p.read_text(encoding='utf-8')
+s=s.replace('function logoutLocal(){epoch++;','function logoutLocal(){resetMedia();epoch++;')
+s=s.replace('if(selected)drafts.set(selected.id,', 'resetMedia();if(selected)drafts.set(selected.id,')
+s=s.replace("box.append(btn('↓ '+a.fileName+' · '+(a.sizeBytes/1024).toFixed(0)+' КБ',()=>download(a),'file-link'))", 'box.append(attachmentView(a))')
+s=s.replace("if(sending||!selected)return;const text=", "if(sending||!selected)return;if(recording){toast('Сначала остановите запись');return;}const text=")
+s=s.replace("file=$('attachment').files[0];if(!text&&!file)", "file=voiceFile||$('attachment').files[0];if(!text&&!file)")
+s=s.replace("drafts.delete(p.chatId);pending=null;", "drafts.delete(p.chatId);pending=null;clearVoice();")
+p.write_text(s,encoding='utf-8')

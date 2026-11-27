@@ -86,7 +86,7 @@ class SettingsViewModel @Inject constructor(
             val owner=database.userDao().currentUserId() ?: return@launch
             val result=accountRemote.adminAccess()
             if(database.userDao().currentUserId()==owner && result is com.mango.core.common.Outcome.Success) {
-                adminAccess.value=result.value.role in setOf("OWNER","ADMIN","MODERATOR")
+                adminAccess.value=hasAdminPanelAccess(result.value.role)
             }
         }
     }

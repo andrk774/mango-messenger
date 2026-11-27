@@ -107,7 +107,7 @@ class RateLimitTest : IntegrationTestBase() {
             }
             assertEquals(HttpStatusCode.TooManyRequests, blocked.status)
 
-            // С другого адреса регистрация по-прежнему доступна.
+            // Подмена заголовка от недоверенного peer не меняет сетевой источник.
             val fromElsewhere = client.post("/v1/auth/register") {
                 contentType(ContentType.Application.Json)
                 header(HttpHeaders.XForwardedFor, "198.51.100.4")
@@ -120,7 +120,7 @@ class RateLimitTest : IntegrationTestBase() {
                     ),
                 )
             }
-            assertEquals(HttpStatusCode.Accepted, fromElsewhere.status)
+            assertEquals(HttpStatusCode.TooManyRequests, fromElsewhere.status)
         }
 
     @Test

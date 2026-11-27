@@ -37,3 +37,8 @@ Thumbs.db
 *.key
 *.dpapi
 recovery-password.txt
+
+# Python caches and local test assembly scratchpad
+__pycache__/
+*.py[cod]
+/scripts/chat-live-test-body.txt

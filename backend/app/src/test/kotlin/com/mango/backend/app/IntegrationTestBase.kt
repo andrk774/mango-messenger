@@ -87,6 +87,7 @@ abstract class IntegrationTestBase {
                 )
                 statement.execute("UPDATE server_settings SET server_name='Mango Messenger',registration_open=true,smtp_profile_id=NULL WHERE id=1")
                 statement.execute("TRUNCATE smtp_profiles CASCADE")
+                statement.execute("TRUNCATE call_settings")
                 statement.execute("INSERT INTO server_settings(id) VALUES (1) ON CONFLICT DO NOTHING")
             }
         }

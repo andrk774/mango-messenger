@@ -18,3 +18,4 @@ try {
     [IO.File]::WriteAllLines($target, $values, [Text.Encoding]::ASCII)
 } finally { $rng.Dispose() }
 Write-Output 'Created secrets/kubernetes/runtime.env. Keep it private; existing Compose credentials were not changed.'
+& (Join-Path $root 'scripts/initialize-smtp-key.ps1') -KeyPath (Join-Path $directory 'smtp-encryption.key')

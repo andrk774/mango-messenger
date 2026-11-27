@@ -9,12 +9,24 @@ const root = path.resolve(__dirname, '../backend/app/src/main/resources');
 const out = path.resolve(__dirname, '../artifacts/web-acceptance');
 fs.mkdirSync(out, { recursive: true });
 const routes = {'/web/welcome.js':'web/welcome.js','/':'web/index.html','/web/':'web/web.html','/web/app.js':'web/app.js','/web/style.css':'web/style.css','/admin/':'admin/index.html','/admin/app.js':'admin/app.js','/admin/style.css':'admin/style.css'};
+routes['/web/kanban.css']='web/kanban.css';
+routes['/web/studio.css']='web/studio.css';
+routes['/web/browser-session.js']='web/browser-session.js';
+routes['/admin/browser-session.js']='web/browser-session.js';
+let browserRemembered=false;
+routes['/web/admin-sso.js']='web/admin-sso.js';
+routes['/web/mango-mark.svg']='web/mango-mark.svg';
+routes['/admin/mango-mark.svg']='web/mango-mark.svg';
+routes['/web/calls-ui.js']='web/calls-ui.js';
+routes['/web/chat-live.js']='web/chat-live.js';
+routes['/web/kanban.js']='web/kanban.js';
+routes['/web/media.js']='web/media.js';
 routes['/admin/kubernetes.js']='admin/kubernetes.js';
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 const server = http.createServer((req,res) => {
   const file = routes[new URL(req.url,'http://localhost').pathname];
   if (!file) { res.writeHead(404).end(); return; }
-  res.writeHead(200, {'Content-Type':file.endsWith('.js')?'application/javascript; charset=utf-8':file.endsWith('.css')?'text/css':'text/html; charset=utf-8','Content-Security-Policy':csp});
+  res.writeHead(200, {'Content-Type':file.endsWith('.svg')?'image/svg+xml':file.endsWith('.js')?'application/javascript; charset=utf-8':file.endsWith('.css')?'text/css':'text/html; charset=utf-8','Content-Security-Policy':csp});
   res.end(fs.readFileSync(path.join(root,file)));
 });
 const user = {id:'10000000-0000-4000-8000-000000000001',displayName:'Тест браузера',username:'browser',email:'browser@example.test'};
@@ -23,6 +35,10 @@ const chat = {id:'20000000-0000-4000-8000-000000000001',title:'Проверка 
 const members = [{userId:user.id,displayName:user.displayName,role:'OWNER'},{userId:peer.id,displayName:peer.displayName,role:'MEMBER'}];
 let messages = [{id:'30000000-0000-4000-8000-000000000001',conversationId:chat.id,senderId:peer.id,senderName:peer.displayName,seq:1,type:'TEXT',body:'Обсудим проект: https://example.test/plan <img src=x onerror=alert(1)>',createdAt:new Date().toISOString(),reactions:[],attachments:[]}];
 let kubernetes={context:'docker-desktop',namespace:'mango-dev',deployment:'backend',service:'backend'};
+let externalProfiles=[];
+let promos=[];
+let auditCleared=false;
+let boardFixture=null;
 let tasks = [], sends = [], mutations = [], failFirstSend = true;
 const welcomeTasks=['AVATAR','INVITE','CHAT','TASK'].map(kind=>({kind,status:'PENDING'}));
 const violations = [];
@@ -30,8 +46,12 @@ async function fixture(route) {
  const req = route.request(), url = new URL(req.url()), p = url.pathname, method = req.method(), body = req.postDataJSON();
  let result = {}, status = 200;
  if (method !== 'GET') mutations.push({p,body});
- if (p==='/v1/site') result={name:'Mango',registrationOpen:true};
- else if (p==='/v1/auth/login') {assert.equal(body.device.platform,'WEB');result={accessToken:'fixture-access',refreshToken:'fixture-refresh'};}
+ if(p==='/v1/boards') {if(method==='GET')result={items:boardFixture?[boardFixture]:[]};else{boardFixture={...body,ownerId:user.id,version:1,unread:0,columns:[{id:'todo',title:'Todo'},{id:'doing',title:'Doing'},{id:'done',title:'Done'}],cards:[],tasks,events:[]};result=boardFixture;}}
+ else if(p.startsWith('/v1/boards/')) {if(method==='POST'&&!p.endsWith('/read')){assert.equal(body.version,boardFixture.version);if(body.op==='place'){boardFixture.cards=boardFixture.cards.filter(c=>c.taskId!==body.taskId);boardFixture.cards.push({...body,position:body.position||0});}if(body.op==='settings'){boardFixture.title=body.title;boardFixture.columns=body.columns;}boardFixture.version++;}result={...boardFixture,tasks};}
+ else if (p==='/v1/site') result={name:'Mango',registrationOpen:true};
+ else if(p==='/v1/auth/refresh'){status=browserRemembered?200:401;result=browserRemembered?{accessToken:'fixture-access',refreshToken:'browser-cookie'}:{};}
+ else if(p==='/v1/auth/browser-clear'){browserRemembered=false;}
+ else if (p==='/v1/auth/login') {browserRemembered=true;assert.equal(body.device.platform,'WEB');result={accessToken:'fixture-access',refreshToken:'fixture-refresh'};}
  else if (p==='/v1/users/me/welcome') result=welcomeTasks;
  else if (p.startsWith('/v1/users/me/welcome/')) {const t=welcomeTasks.find(t=>t.kind===p.split('/').pop());t.status=body.status;result=t;}
  else if (p==='/v1/users/me') result=user;
@@ -57,12 +77,30 @@ async function fixture(route) {
  }
  else if(p.endsWith('/comments')) result={items:[]};
  else if(p.startsWith('/v1/tasks/')) {result=tasks[0];if(method==='PATCH'){Object.assign(result,body.changedFields);result.version++;result={task:result,conflicts:[]};}}
+ else if(p==='/v1/calls/active') result={items:[]};
+ else if(p==='/v1/admin/calls') result=method==='GET'?{revision:0,enabled:false,canSave:true,url:'',key:'',internalUrl:'',hasSecret:false,hasTurnSecret:false,turnUrls:[],relayOnly:false}:{ok:true};
+ else if(p==='/v1/admin/calls/test') result={message:'LiveKit fixture OK'};
+ else if(p==='/v1/admin/analytics') result={daily:[{date:'2026-11-27',users:2,messages:5,active:2,tasks:1}],support:[{status:'OPEN',count:1}],calls:{since:'2026-11-27T00:00:00Z',grants:2,errors:0,live:{status:'disabled'}}};
+ else if(p==='/v1/admin/support') result=[{id:'ticket-test',subject:'Support <script>',status:'OPEN',updatedAt:'2026-11-27T00:00:00Z'}];
+ else if(p==='/v1/admin/support/ticket-test') result=[{seq:1,id:'m1',staff:false,body:'Question <img src=x>',createdAt:'2026-11-27T00:00:00Z'}];
+ else if(p.startsWith('/v1/admin/support/')&&method==='POST') result={ok:true};
  else if(p==='/v1/admin/me') result={role:'OWNER'};
+ else if(p==='/v1/admin/promos'){if(method==='POST'){const promo={...body,id:'promo-fixture',used:0,enabled:true};promos.push(promo);result={id:promo.id};}else result=promos;}
+ else if(p.startsWith('/v1/admin/promos/')){promos[0].enabled=body.enabled;result={ok:true};}
  else if(p==='/v1/admin/overview') result={users:2,conversations:1,messages:4,tasks:1,database:'ready',environment:'TEST',uptimeSeconds:120,redisConfigured:true,firebaseConfigured:false,freeStorageBytes:20e9,maxUploadMb:100,user_blocks:0,user_reports:0};
  else if(p==='/v1/admin/users') result=[{...peer,name:'<img src=x onerror=alert(1)>',email:'peer@example.test',points:0,verified:true,createdAt:new Date().toISOString()}];
+ else if(p==='/v1/admin/kubernetes/external') {if(method==='POST')externalProfiles=body.profiles;result=externalProfiles;}
  else if(p==='/v1/admin/kubernetes') {if(method==='POST')kubernetes=body;result=kubernetes;}
+ else if(p==='/v1/admin/kubernetes/connections')result=[{context:'docker-desktop',namespace:'mango-dev'}];
+ else if(p==='/v1/admin/kubernetes/status')result={checkedAt:new Date().toISOString(),deployment:{name:'backend',readyReplicas:1,desiredReplicas:1,availableReplicas:1,generation:2,observedGeneration:2},pods:[{name:'backend-fixture',phase:'Running',ready:1,total:1,restarts:0}],volumes:[{name:'pgdata',phase:'Bound'}],service:{name:'backend',type:'ClusterIP'}};
  else if(p==='/v1/admin/settings') result={serverName:'Mango',registrationOpen:true,smtpProfileId:null};
- else if(['/v1/admin/reports','/v1/admin/audit','/v1/admin/smtp-profiles'].includes(p)&&method==='GET') result=[];
+ else if(p==='/v1/admin/audit/archive'){auditCleared=true;result={ok:true};}
+ else if(p==='/v1/admin/audit'){
+  const records=[{id:1,created_at:new Date().toISOString(),action:'ROLE',actor:{...user,name:user.displayName},targetUser:{...peer,name:peer.displayName},target:peer.id,detail:'Role changed'},{id:2,created_at:new Date().toISOString(),action:'SMTP_SELECT',actor:{...user,name:user.displayName},target:'environment',detail:'Mail settings'}];
+  result=url.searchParams.get('archived')==='true'?(auditCleared?records:[]):auditCleared?[]:records;
+ }
+ else if(p==='/v1/admin/users/'+peer.id)result={...peer,name:peer.displayName,email:'peer@example.test',points:12500,verified:true,role:'USER',createdAt:new Date().toISOString()};
+ else if(['/v1/admin/reports','/v1/admin/smtp-profiles'].includes(p)&&method==='GET') result=[];
  else if(p.startsWith('/v1/admin/')&&method==='POST') result={ok:true};
  else if(p==='/v1/auth/logout') result={};
  else {throw Error('Unmocked '+method+' '+p);}
@@ -77,13 +115,148 @@ async function noOverflow(page) {assert(await page.evaluate(()=>document.documen
 async function run() {
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const base='http://127.0.0.1:'+server.address().port;
- const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH||'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'});
+ const browser=await chromium.launch({headless:true,args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream'],executablePath:process.env.CHROME_PATH||'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'});
  try {
-  const context=await browser.newContext({viewport:{width:1365,height:900}});
+  const nativeContext=await browser.newContext({userAgent:'MangoNativeAdmin/1'});
+  await nativeContext.route('**/v1/**',fixture);
+  const nativePage=await nativeContext.newPage();await nativePage.goto(base+'/admin/');
+  await nativePage.evaluate(()=>{
+    const ports=new MessageChannel();
+    ports.port1.onmessage=async e=>{const q=JSON.parse(e.data);const r=await fetch('/v1'+q.path,{method:q.method,headers:{'Content-Type':'application/json'},body:q.body===undefined?undefined:JSON.stringify(q.body)});ports.port1.postMessage(JSON.stringify({id:q.id,status:r.status,data:await r.json()}));};
+    window.dispatchEvent(new MessageEvent('message',{data:'mango-native-admin',origin:'',source:null,ports:[ports.port2]}));
+  });
+  await nativePage.locator('#workspace').waitFor({state:'visible'});await nativeContext.close();
+  const context=await browser.newContext({viewport:{width:1365,height:900},reducedMotion:'reduce'});
   await context.route('**/v1/**',fixture);
   const page=await context.newPage();
   page.on('pageerror',e=>violations.push(e.message));
   page.on('console',m=>{if(m.type()==='error'&&m.text().includes('Content Security Policy'))violations.push(m.text());});
+  await page.goto(base+'/admin/');
+  const storageBeforeNativeLogin=await page.evaluate(()=>JSON.stringify([Object.entries(localStorage),Object.entries(sessionStorage)]));
+  assert.equal(await page.evaluate(()=>window.mangoAdminSession('native-test-token')),true);
+  assert(await page.locator('#workspace').isVisible());
+  assert(await page.locator('#logout').isHidden());
+  assert.equal(await page.evaluate(()=>JSON.stringify([Object.entries(localStorage),Object.entries(sessionStorage)])),storageBeforeNativeLogin);
+  await page.route('**/v1/admin/me',r=>r.fulfill({status:403,contentType:'application/json',body:'{"message":"Forbidden"}'}));
+  assert.equal(await page.evaluate(()=>window.mangoAdminSession('revoked-token')),false);
+  assert(await page.locator('#workspace').isHidden());
+  await page.unroute('**/v1/admin/me');
+  if(process.argv.includes('--ops-only')){
+    await page.goto(base+'/web/');
+    await login(page,'#auth-form');await page.locator('#open-admin').waitFor({state:'visible'});
+    await page.reload();await page.locator('#app').waitFor({state:'visible'});await page.locator('#open-admin').waitFor({state:'visible'});
+    const standalone=await context.newPage();await standalone.goto(base+'/admin/');await standalone.locator('#workspace').waitFor({state:'visible'});await standalone.close();
+    const popupPromise=context.waitForEvent('page');
+    await page.locator('#open-admin').click();const admin=await popupPromise;
+    admin.on('pageerror',e=>violations.push(e.message));
+    await admin.locator('#workspace').waitFor({state:'visible'});
+    assert.equal(await admin.evaluate(()=>access),'native');
+    assert.equal(await admin.evaluate(()=>localStorage.length+sessionStorage.length),0);
+    assert.equal(new URL(admin.url()).search,'');assert.equal(new URL(admin.url()).hash,'');
+    await admin.locator('[data-tab=promos]').click();
+    await admin.getByRole('button',{name:'Создать промокод',exact:true}).click();
+    await admin.getByRole('button',{name:'Сгенерировать код',exact:true}).click();
+    const first=await admin.locator('[name=code]').inputValue();assert.match(first,/^[A-HJ-NP-Z2-9]{12}$/);
+    await admin.getByRole('button',{name:'Сгенерировать код',exact:true}).click();
+    assert.notEqual(await admin.locator('[name=code]').inputValue(),first);
+    assert.equal(promos.length,0);
+    await admin.screenshot({path:path.join(out,'promo-generator.png')});
+    await admin.locator('#close-dialog').click();
+    await admin.locator('[data-tab=settings]').click();
+    await admin.getByRole('button',{name:'Проверить состояние',exact:true}).click();
+    await admin.getByText('backend-fixture',{exact:true}).waitFor();
+    await admin.screenshot({path:path.join(out,'kubernetes-api.png'),fullPage:true});
+    // Refreshing the admin tab repeats the scoped handshake, not a password login.
+    await admin.reload();await admin.locator('#workspace').waitFor({state:'visible'});
+    await admin.locator('[data-tab=audit]').click();
+    await admin.getByRole('columnheader',{name:'Пользователь',exact:true}).waitFor();
+    await admin.getByRole('button',{name:'Профиль '+peer.displayName,exact:true}).click();
+    await admin.getByRole('button',{name:'Имя и username',exact:true}).click();
+    await admin.getByRole('button',{name:'Назад к карточке пользователя',exact:true}).click();
+    await admin.getByRole('button',{name:'Новый пароль',exact:true}).click();
+    await admin.locator('#dialog [name=password]').fill('Unsubmitted-example');
+    await admin.getByRole('button',{name:'Назад к карточке пользователя',exact:true}).click();
+    assert.equal(await admin.locator('#dialog [name=password]').count(),0);
+    await admin.screenshot({path:path.join(out,'user-profile-redesign.png')});
+    await admin.setViewportSize({width:390,height:844});await noOverflow(admin);
+    await admin.screenshot({path:path.join(out,'user-profile-mobile.png')});
+    await admin.setViewportSize({width:1365,height:900});
+    await admin.locator('#close-dialog').click();
+    await admin.screenshot({path:path.join(out,'audit-profile-icons.png')});
+    await admin.getByRole('button',{name:'Очистить журнал',exact:true}).click();
+    await admin.locator('[name=confirmation]').fill('wrong');
+    await admin.getByRole('button',{name:'Подтвердить очистку',exact:true}).click();
+    assert.equal(auditCleared,false);
+    await admin.locator('[name=confirmation]').fill('ОЧИСТИТЬ');
+    await admin.getByRole('button',{name:'Подтвердить очистку',exact:true}).click();await admin.locator('#dialog').waitFor({state:'hidden'});
+    assert.equal(auditCleared,true);
+    await admin.getByRole('button',{name:'Архив',exact:true}).click();await admin.getByRole('button',{name:'Профиль '+peer.displayName,exact:true}).waitFor();
+    await admin.locator('[data-tab=users]').click();await admin.getByRole('button',{name:'Управлять',exact:true}).click();
+    await admin.getByRole('button',{name:'Изменить роль',exact:true}).click();
+    await admin.locator('[name=role]').selectOption('MODERATOR');await admin.locator('[name=reason]').fill('Role acceptance');
+    await admin.getByRole('button',{name:'Сохранить роль',exact:true}).click();await admin.locator('#dialog').waitFor({state:'hidden'});
+    assert(mutations.some(m=>m.p.endsWith('/role')&&m.body.role==='MODERATOR'));
+    await page.route('**/v1/admin/me',r=>r.fulfill({status:200,contentType:'application/json',body:'{"role":"ADMIN"}'}));
+    await admin.reload();await admin.locator('#workspace').waitFor({state:'visible'});
+    assert(await admin.locator('[data-tab=calls]').isVisible());
+    await admin.locator('[data-tab=calls]').click();await admin.locator('[name=turnUrls]').waitFor();
+    await admin.screenshot({path:path.join(out,'livekit-turn-settings.png'),fullPage:true});
+    await admin.locator('[data-tab=users]').click();await admin.getByRole('button',{name:'Управлять',exact:true}).click();
+    assert(await admin.getByRole('button',{name:'Изменить роль',exact:true}).isDisabled());
+    await page.unroute('**/v1/admin/me');
+    await page.route('**/v1/admin/me',r=>r.fulfill({status:200,contentType:'application/json',body:'{"role":"MODERATOR"}'}));
+    await admin.reload();await admin.locator('#workspace').waitFor({state:'visible'});
+    await admin.locator('[data-tab=audit]').click();
+    assert(await admin.getByRole('button',{name:'Очистить журнал',exact:true}).isEnabled());
+    for(const role of ['ANALYST','BOARD','MANAGER']){
+      await page.unroute('**/v1/admin/me');
+      await page.route('**/v1/admin/me',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({role})}));
+      await admin.reload();await admin.locator('#workspace').waitFor({state:'visible'});
+      assert(await admin.locator('[data-tab=settings]').isHidden());
+      assert(await admin.locator('[data-tab=calls]').isHidden());
+      assert.equal(await admin.locator('[data-tab=analytics]').isVisible(),role!=='MANAGER');
+      assert.equal(await admin.locator('[data-tab=users]').isVisible(),role==='MANAGER');
+      if(role==='BOARD'){
+        await admin.locator('[data-tab=audit]').click();
+        assert.equal(await admin.getByRole('button',{name:'Очистить журнал',exact:true}).count(),0);
+      }
+      if(role==='MANAGER'){
+        await admin.locator('[data-tab=users]').click();await admin.getByRole('button',{name:'Управлять',exact:true}).click();
+        assert.equal(await admin.getByRole('button',{name:'Новый пароль',exact:true}).count(),0);
+      }
+    }
+    await page.unroute('**/v1/admin/me');
+    await page.route('**/v1/admin/me',r=>r.fulfill({status:403,contentType:'application/json',body:'{"message":"Forbidden"}'}));
+    await admin.reload();await admin.locator('#login-screen').waitFor({state:'visible'});
+    await page.evaluate(()=>window.mangoCheckAdmin());
+    assert(await page.locator('#open-admin').isHidden());
+    await page.locator('#logout').click();await admin.waitForEvent('close').catch(()=>{});
+    assert.deepEqual(violations,[]);console.log('PASS: web admin SSO, reload, role revocation, no stored credentials, promo generation, Kubernetes status');return;
+  }
+  if(process.argv.includes('--admin-only')){
+    await page.goto(base+'/admin/');
+    await page.evaluate(()=>{
+      const ports=new MessageChannel();
+      ports.port1.onmessage=async e=>{const q=JSON.parse(e.data);const r=await fetch('/v1'+q.path,{method:q.method,headers:{'Content-Type':'application/json'},body:q.body===undefined?undefined:JSON.stringify(q.body)});ports.port1.postMessage(JSON.stringify({id:q.id,status:r.status,data:await r.json()}));};
+      window.postMessage('mango-native-admin',location.origin,[ports.port2]);
+    });
+    await page.locator('#workspace').waitFor({state:'visible'});
+    await page.locator('[data-tab=calls]').click();await page.locator('[name=url]').fill('wss://calls.example.test');
+    await page.locator('#view form button[type=submit]').click();
+    await page.waitForFunction(()=>document.querySelector('#notice').textContent.includes('\u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u044b'));
+    const callSave=mutations.find(m=>m.p==='/v1/admin/calls');assert.equal(callSave.body.url,'wss://calls.example.test');
+    await page.locator('[data-tab=analytics]').click();await page.locator('.analytics-bar').waitFor();
+    await page.screenshot({path:path.join(out,'admin-analytics.png'),fullPage:true});
+    await page.locator('[data-tab=support]').click();await page.locator('#view table button').click();
+    await page.locator('#dialog [name=body]').fill('Fixture answer');
+    const supportReply=page.waitForResponse(r=>r.url().endsWith('/v1/admin/support/ticket-test/reply')&&r.request().method()==='POST');
+    await page.locator('#dialog form').first().locator('button[type=submit]').click();await supportReply;
+    await page.waitForFunction(()=>document.querySelector('#notice').textContent.includes('\u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u044b'));
+    assert.equal(await page.locator('#dialog img').count(),0);
+    assert(mutations.some(m=>m.p==='/v1/admin/support/ticket-test/reply'));
+    await page.screenshot({path:path.join(out,'admin-support.png'),fullPage:true});
+    assert.deepEqual(violations,[]);console.log('PASS: native admin channel, role denial, calls settings, analytics, support reply');return;
+  }
   await page.goto(base+'/');await noOverflow(page);await page.screenshot({path:path.join(out,'homepage-desktop.png'),fullPage:true});
   await page.getByRole('link',{name:'Войти в веб-версию'}).click();
   await login(page,'#auth-form');await page.locator('#app').waitFor({state:'visible'});
@@ -111,13 +284,88 @@ async function run() {
   await page.locator('.chat-item').click();await page.getByText('Обсудим проект:',{exact:false}).waitFor();
   assert.equal(await page.locator('.message img').count(),0);
   assert.equal(await page.locator('.message a').getAttribute('href'),'https://example.test/plan');
+  await page.locator('#microphone').click();
+  await page.waitForFunction(()=>recording?.recorder?.state==='recording');
+  await page.waitForTimeout(1100);
+  await page.locator('#microphone').click();
+  await page.waitForFunction(()=>voiceFile?.size>0);
+  assert.equal(await page.evaluate(()=>voiceFile.type),'audio/webm');
+  assert.equal(await page.evaluate(()=>recording),null);
+  await page.locator('#voice-cancel').click();
+  assert.equal(await page.evaluate(()=>voiceFile),null);
+  await page.evaluate(async()=>{
+    const original=attachmentBlob;
+    attachmentBlob=async()=>new Blob([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII='),c=>c.charCodeAt(0))],{type:'image/png'});
+    document.querySelector('#messages').append(attachmentView({id:'fixture-image',mimeType:'image/png',fileName:'image.png',sizeBytes:68}));
+    await new Promise(r=>setTimeout(r,100));attachmentBlob=original;
+  });
+  await page.waitForFunction(()=>document.querySelector('.attachment-preview img')?.naturalWidth===1);
   await page.locator('#message-text').fill('Сообщение с повтором');await page.locator('#composer button[type=submit]').click();
   await page.getByText('Не отправлено.',{exact:false}).waitFor();
   await page.locator('#composer button[type=submit]').click();await page.locator('#message-text').waitFor({state:'visible'});
   await page.waitForFunction(()=>document.querySelector('#message-text').value==='');
   assert.equal(sends.length,2);assert.equal(sends[0].clientMsgId,sends[1].clientMsgId);assert.equal(messages.length,2);
-  await page.locator('.message').first().getByRole('button',{name:'＋ Реакция'}).click();
+  await page.route('**/v1/attachments/upload-ticket',route=>route.fulfill({json:{uploaded:true}}));
+  await page.locator('#microphone').click();
+  await page.waitForFunction(()=>recording?.recorder?.state==='recording');
+  await page.waitForTimeout(1100);await page.locator('#microphone').click();
+  await page.waitForFunction(()=>voiceFile?.size>0);
+  await page.locator('#composer button[type=submit]').click();
+  await page.waitForFunction(()=>voiceFile===null&&!sending);
+  assert.equal(sends[2].type,'VOICE');assert.equal(sends[2].attachmentIds.length,1);
+  const tickets=[];let failSecond=true;
+  await page.route('**/v1/attachments/upload-ticket',route=>{const ticket=route.request().postDataJSON();tickets.push(ticket);if(ticket.fileName==='second.txt'&&failSecond){failSecond=false;return route.fulfill({status:503,json:{message:'Upload interrupted'}});}return route.fulfill({json:{uploaded:true}});});
+  await page.locator('#attachment').setInputFiles([{name:'first.txt',mimeType:'text/plain',buffer:Buffer.from('First file')},{name:'second.txt',mimeType:'text/plain',buffer:Buffer.from('Second file')}]);
+  await page.locator('#composer button[type=submit]').click();
+  await page.waitForFunction(()=>pending&&!sending&&pending.files.length===2);
+  assert.equal(sends.length,3,'No incomplete message should be sent');
+  await page.locator('#composer button[type=submit]').click();
+  await page.waitForFunction(()=>!pending&&!sending);
+  assert.equal(sends[3].attachmentIds.length,2);
+  assert.equal(tickets[0].attachmentId,tickets[2].attachmentId);
+  assert.equal(tickets[1].attachmentId,tickets[3].attachmentId);
+  await page.locator('#attachment').setInputFiles(Array.from({length:11},(_,i)=>({name:i+'.txt',mimeType:'text/plain',buffer:Buffer.from('x')})));
+  await page.locator('#composer button[type=submit]').click();assert.equal(tickets.length,4);
+  await page.locator('#attachment').setInputFiles([]);
+  await page.evaluate(()=>{navigator.mediaDevices.getUserMedia=async()=>{throw new DOMException('denied','NotAllowedError');};});
+  await page.locator('#microphone').click();
+  await page.waitForFunction(()=>recording===null);
+  assert.equal(await page.locator('#microphone').getAttribute('aria-pressed'),'false');
+  await page.locator('.message').first().locator('.message-menu summary').click();await page.locator('.message').first().getByRole('button',{name:'＋ Реакция'}).click();
   await page.locator('.emoji-grid button').first().click();await page.getByRole('button',{name:'👍 1',exact:true}).waitFor();
+  await page.locator('.message').first().locator('.message-menu summary').click();
+  await page.locator('.message').first().getByRole('button',{name:'Ответить',exact:true}).click();
+  await page.locator('#reply-preview').waitFor({state:'visible'});
+  assert(await page.locator('#composer button[type=submit]').isHidden());
+  await page.locator('#message-text').fill('Ответ с цитатой');
+  assert(await page.locator('#microphone').isHidden());
+  await page.locator('#composer button[type=submit]').click();
+  await page.waitForFunction(()=>!sending&&!pending&&document.querySelector('#reply-preview').hidden);
+  assert.equal(sends.at(-1).replyToId,messages[0].id);
+  const reply=messages.at(-1);reply.replyTo={messageId:messages[0].id,senderName:peer.displayName,textSnapshot:messages[0].body};
+  // Real PCM WAV fixture makes waveform decoding, duration and seeking observable.
+  await page.evaluate(async()=>{
+    const original=attachmentBlob;
+    const size=16000,bytes=new ArrayBuffer(44+size*2),v=new DataView(bytes),put=(o,t)=>[...t].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
+    put(0,'RIFF');v.setUint32(4,36+size*2,true);put(8,'WAVE');put(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,8000,true);v.setUint32(28,16000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);put(36,'data');v.setUint32(40,size*2,true);for(let i=0;i<size;i++)v.setInt16(44+i*2,Math.sin(i*.2)*Math.sin(i/size*3)*12000,true);
+    attachmentBlob=async a=>a.mimeType==='audio/wav'?new Blob([bytes],{type:'audio/wav'}):new Blob([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII='),c=>c.charCodeAt(0))],{type:'image/png'});
+    const base={conversationId:selected.id,senderId:me.id,senderName:me.displayName,createdAt:new Date().toISOString(),reactions:[]};
+    messages.set('album-fixture',{...base,id:'album-fixture',seq:100,body:'Два изображения',attachments:[1,2].map(i=>({id:'album-'+i,mimeType:'image/png',fileName:'image-'+i+'.png',sizeBytes:68}))});
+    messages.set('voice-fixture',{...base,id:'voice-fixture',seq:101,attachments:[{id:'wave-fixture',mimeType:'audio/wav',fileName:'voice.wav',sizeBytes:bytes.byteLength}]});
+    renderMessages(true);await new Promise(r=>setTimeout(r,200));attachmentBlob=original;
+  });
+  await page.route('**/v1/attachments/wave-fixture/transcript',route=>route.fulfill({json:{text:'Распознанный текст <img src=x>'}}));
+  await page.evaluate(async()=>{await loadMessages();});
+  assert.equal(await page.locator('.message-quote').count(),1);
+  assert.equal(await page.locator('.image-album:not(.single) img').count(),2);
+  await page.waitForFunction(()=>document.querySelector('.voice-time')?.textContent.includes('0:02'));
+  await page.locator('.voice-play').click();await page.waitForFunction(()=>!document.querySelector('.voice-message audio').paused);
+  await page.locator('.voice-play').click();
+  await page.locator('.voice-track input').fill('500');
+  assert(await page.evaluate(()=>document.querySelector('.voice-message audio').currentTime>=.9));
+  await page.locator('.voice-transcript summary').click();await page.getByRole('button',{name:'Показать текст',exact:true}).click();
+  await page.getByText('Распознанный текст <img src=x>',{exact:true}).waitFor();assert.equal(await page.locator('.voice-transcript img').count(),0);
+  await page.locator('.image-open').first().click();await page.locator('.full-image').waitFor();await page.locator('#modal-close').click();
   await page.screenshot({path:path.join(out,'chat-desktop-fixture.png'),fullPage:true});
   await page.locator('#tab-tasks').click();await page.locator('#new-task').click();
   await page.locator('#modal [name=title]').fill('Задача для участника');
@@ -128,11 +376,65 @@ async function run() {
   await page.locator('#modal [name=status]').selectOption('IN_PROGRESS');await page.getByRole('button',{name:'Сохранить',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.task-card')?.textContent.includes('В работе'));
   await page.locator('#modal-close').click();await page.screenshot({path:path.join(out,'tasks-desktop-fixture.png'),fullPage:true});
+  await page.locator('#tab-boards').click();
+  await page.locator('#boards-screen').getByRole('button',{name:'＋ Доска',exact:true}).click();
+  await page.locator('#modal [name=title]').fill('Mango team board');
+  await page.locator('#modal [name=conversationId]').selectOption(chat.id);
+  await page.locator('#modal button[type=submit]').click();
+  await page.locator('.kanban-column').first().waitFor();
+  await page.locator('.kanban-column').first().getByRole('button').click();
+  await page.locator('#modal button[type=submit]').click();
+  await page.locator('.kanban-card').waitFor();
+  await page.locator('.kanban-card').dragTo(page.locator('[data-column=doing]'));
+  await page.waitForFunction(()=>document.querySelector('[data-column=doing] .kanban-card'));
+  assert.equal(boardFixture.cards[0].columnId,'doing');
+  await page.locator('.kanban-card').getByRole('button').last().click();
+  await page.locator('#modal [name=tags]').fill('design, priority');
+  await page.locator('#modal button[type=submit]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.kanban-tag').length===2);
+  await page.locator('#boards-screen input').first().fill('absent');assert.equal(await page.locator('.kanban-card').count(),0);
+  await page.locator('#boards-screen input').first().fill('');
+  await page.locator('[data-column=todo]').getByRole('button').click();
+  await page.locator('#modal').getByRole('button',{name:'Создать новую задачу',exact:true}).click();
+  await page.locator('#modal [name=title]').fill('Проверить дизайн доски');
+  assert.equal(await page.locator('#modal [name=conversationId]').isDisabled(),true);
+  await page.locator('#modal button[type=submit]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.kanban-card').length===2);
+  assert.equal(tasks[1].conversationId,chat.id);
+  await page.locator('#boards-screen').getByRole('button',{name:'Колонки и название',exact:true}).click();
+  await page.locator('.kanban-settings-row input').first().fill('Запланировано');
+  await page.locator('#modal').getByRole('button',{name:'＋ Колонка',exact:true}).click();
+  await page.locator('.kanban-settings-row input').last().fill('На проверке');
+  await page.locator('#modal button[type=submit]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.kanban-column').length===4);
+  assert.equal(boardFixture.columns[0].title,'Запланировано');
+  await page.getByRole('button',{name:'Мои',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'Мои',exact:true}).getAttribute('aria-pressed'),'true');
+  assert.equal(await page.locator('.kanban-card').count(),0);
+  await page.getByRole('button',{name:'Сбросить',exact:true}).click();
+  assert.equal(await page.locator('.kanban-card').count(),2);
+  await page.getByRole('button',{name:'Просроченные',exact:true}).click();
+  assert.equal(await page.locator('.kanban-card').count(),0);
+  await page.getByRole('button',{name:'Сбросить',exact:true}).click();
+  await page.locator('.kanban-title').first().click();
+  await page.locator('#modal [name=title]').waitFor();
+  assert.equal(await page.locator('#modal').evaluate(e=>e.classList.contains('task-drawer')),true);
+  await page.screenshot({path:path.join(out,'kanban-task-drawer.png'),fullPage:true});
+  await page.keyboard.press('Escape');
+  await page.screenshot({path:path.join(out,'kanban-desktop-fixture.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});await noOverflow(page);
+  await page.screenshot({path:path.join(out,'kanban-mobile-fixture.png'),fullPage:true});
+  await page.locator('.kanban-title').first().click();
+  await page.locator('#modal [name=title]').waitFor();await noOverflow(page);
+  await page.screenshot({path:path.join(out,'kanban-task-mobile.png')});
+  await page.keyboard.press('Escape');
   await page.setViewportSize({width:390,height:844});await noOverflow(page);
   await page.locator('#tab-chats').click();assert(await page.locator('#new-chat').isVisible());await noOverflow(page);
   await page.screenshot({path:path.join(out,'chat-mobile-fixture.png'),fullPage:true});
+  await page.locator('.app-header').screenshot({path:path.join(out,'navigation-icons-mobile.png')});
   await page.goto(base+'/');await noOverflow(page);await page.screenshot({path:path.join(out,'homepage-mobile.png'),fullPage:true});
-  await page.setViewportSize({width:1365,height:900});await page.goto(base+'/admin/');await login(page,'#login-form');
+  await page.setViewportSize({width:1365,height:900});await page.goto(base+'/admin/');
+  await page.goto(base+'/admin/');await login(page,'#login-form');
   await page.locator('#workspace').waitFor({state:'visible'});await page.locator('.cards').waitFor();
   await page.screenshot({path:path.join(out,'admin-desktop-fixture.png'),fullPage:true});
   await page.locator('[data-tab=users]').click();await page.getByRole('button',{name:'Управлять',exact:true}).click();
@@ -144,12 +446,35 @@ async function run() {
   await page.locator('[data-tab=smtp]').click();await page.getByRole('button',{name:'＋ Добавить SMTP'}).click();
   await page.locator('#dialog [name=preset]').selectOption('mailpit');await page.locator('#dialog [name=sender]').fill('noreply@example.test');await page.getByRole('button',{name:'Сохранить профиль'}).click();await page.locator('#dialog').waitFor({state:'hidden'});
   const smtp=mutations.find(m=>m.p==='/v1/admin/smtp-profiles');assert.equal(smtp.body.host,'mailpit');assert.equal(smtp.body.port,1025);
+  await page.locator('[data-tab=promos]').click();await page.getByRole('button',{name:'Создать промокод',exact:true}).click();
+  await page.locator('#dialog [name=code]').fill('MANGO2026');await page.locator('#dialog [name=points]').fill('150');await page.locator('#dialog [name=days]').fill('7');await page.locator('#dialog [name=maxUses]').fill('20');await page.locator('#dialog [name=expiresAt]').fill('2027-12-01T12:00');
+  await page.locator('#dialog button[type=submit]').click();await page.getByText('MANGO2026',{exact:true}).waitFor();
+  assert.equal(promos[0].points,150);assert.equal(promos[0].days,7);assert.equal(promos[0].maxUses,20);
+  await page.getByRole('button',{name:'Отключить',exact:true}).click();await page.getByRole('button',{name:'Включить',exact:true}).waitFor();assert.equal(promos[0].enabled,false);
   await page.locator('[data-tab=settings]').click();
   await page.locator('[name=context]').fill('operator-cluster');
   const namespace=page.locator('[name=namespace]');await namespace.fill('team-dev');
   await namespace.locator('xpath=ancestor::form').locator('button[type=submit]').click();
   await page.waitForFunction(()=>Array.from(document.querySelectorAll('textarea')).some(x=>x.value.includes('--context=operator-cluster --namespace=team-dev')));
   assert.equal(mutations.filter(m=>m.p==='/v1/admin/kubernetes').length,1);
+  await page.locator('summary').filter({hasText:'Добавить внешний кластер'}).click();
+  await page.locator('[name=external-name]').fill('production');
+  await page.locator('[name=external-context]').fill('external-mango');
+  await page.locator('[name=external-publicHost]').fill('mango.example.com');
+  await page.getByRole('button',{name:'Добавить внешний кластер',exact:true}).click();
+  await page.getByText('Статус: подключение не проверено',{exact:true}).waitFor();
+  assert.equal(externalProfiles[0].context,'external-mango');
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('textarea')).some(x=>x.value.includes('--context=external-mango --namespace=mango-prod')));
+  await page.locator('[data-tab=overview]').click();await page.locator('.cards').waitFor();
+  await page.locator('[data-tab=settings]').click();
+  await page.locator('[name=external-name]').first().waitFor();
+  assert.equal(await page.locator('[name=external-name]').first().inputValue(),'production');
+  await page.locator('[name=external-namespace]').first().fill('mango-stage');
+  await page.getByRole('button',{name:'Сохранить профиль',exact:true}).click();
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('textarea')).some(x=>x.value.includes('--context=external-mango --namespace=mango-stage')));
+  await page.getByRole('button',{name:'Удалить только профиль',exact:true}).click();
+  await page.getByText('Статус: подключение не проверено',{exact:true}).waitFor({state:'hidden'});
+  assert.equal(externalProfiles.length,0);
   await page.setViewportSize({width:390,height:844});await noOverflow(page);
   await page.screenshot({path:path.join(out,'kubernetes-settings-mobile-fixture.png'),fullPage:true});
   await page.locator('[data-tab=overview]').click();await page.locator('.cards').waitFor();

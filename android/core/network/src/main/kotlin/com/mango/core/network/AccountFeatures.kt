@@ -22,8 +22,31 @@ import javax.inject.Singleton
 @Serializable data class ReferralCodeDto(val code:String)
 @Serializable data class ReferralAppliedDto(val applied:Boolean)
 @Serializable data class AdminAccessDto(val role:String)
+@Serializable data class PromoResultDto(val alreadyApplied:Boolean,val points:Long,val days:Int)
+@Serializable data class CloudContactDto(val id:String,val name:String,val phone:String="",val email:String="",val updatedAt:String?=null)
+@Serializable data class CloudContactsBatchDto(val items:List<CloudContactDto>)
+@Serializable data class ContactsSavedDto(val saved:Int)
+
+@Serializable data class CallIceServerDto(val urls:List<String>,val username:String,val credential:String)
+@Serializable data class SupportTicketDto(val id:String,val subject:String,val status:String,val updatedAt:String)
+@Serializable data class SupportMessageDto(val id:String,val seq:Long,val body:String,val staff:Boolean,val createdAt:String)
+@Serializable data class SupportCreateDto(val id:String,val subject:String,val body:String)
+@Serializable data class SupportReplyDto(val id:String,val body:String)
+@Serializable data class SupportOkDto(val ok:Boolean)
+@Serializable data class CallGrantDto(val url:String,val token:String,val room:String,val iceServers:List<CallIceServerDto> = emptyList(),val relayOnly:Boolean=false)
 
 interface AccountFeaturesApi {
+    @GET("v1/support") suspend fun support(@Query("offset") offset:Int):Response<List<SupportTicketDto>>
+    @GET("v1/support/{id}") suspend fun supportMessages(@Path("id") id:String,@Query("before") before:Long?):Response<List<SupportMessageDto>>
+    @POST("v1/support") suspend fun createSupport(@Body body:SupportCreateDto):Response<ReportResultDto>
+    @POST("v1/support/{id}/reply") suspend fun replySupport(@Path("id") id:String,@Body body:SupportReplyDto):Response<SupportOkDto>
+    @POST("v1/conversations/{id}/call/join") suspend fun joinCall(@Path("id") id:String):Response<CallGrantDto>
+    @POST("v1/users/me/promos") suspend fun redeemPromo(@Body code:ReferralCodeDto):Response<PromoResultDto>
+    @GET("v1/users/me/contacts") suspend fun cloudContacts():Response<List<CloudContactDto>>
+    @POST("v1/users/me/contacts/sync") suspend fun syncContacts(@Body batch:CloudContactsBatchDto):Response<ContactsSavedDto>
+    @POST("v1/nearby") suspend fun nearbyPublish(@Body location:NearbyLocationDto):Response<NearbyVisibilityDto>
+    @GET("v1/nearby") suspend fun nearby():Response<List<NearbyPersonDto>>
+    @DELETE("v1/nearby") suspend fun nearbyHide():Response<NearbyVisibilityDto>
     @GET("v1/admin/me") suspend fun adminAccess():Response<AdminAccessDto>
     @PATCH("v1/users/me/referral") suspend fun editReferral(@Body code:ReferralCodeDto):Response<ReferralCodeDto>
     @GET("v1/users/me/referral") suspend fun referral():Response<ReferralDto>
@@ -40,6 +63,17 @@ interface AccountFeaturesApi {
 }
 
 @Singleton class AccountFeaturesRemote @Inject constructor(private val api:AccountFeaturesApi) {
+    suspend fun support(offset:Int=0)=apiCall{api.support(offset)}
+    suspend fun supportMessages(id:String,before:Long?=null)=apiCall{api.supportMessages(id,before)}
+    suspend fun createSupport(body:SupportCreateDto)=apiCall{api.createSupport(body)}
+    suspend fun replySupport(id:String,body:SupportReplyDto)=apiCall{api.replySupport(id,body)}
+    suspend fun joinCall(id:String)=apiCall{api.joinCall(id)}
+    suspend fun redeemPromo(code:String)=apiCall{api.redeemPromo(ReferralCodeDto(code))}
+    suspend fun cloudContacts()=apiCall{api.cloudContacts()}
+    suspend fun syncContacts(items:List<CloudContactDto>)=apiCall{api.syncContacts(CloudContactsBatchDto(items.map{it.copy(updatedAt=null)}))}
+    suspend fun nearbyPublish(latitude:Double,longitude:Double) = apiCall { api.nearbyPublish(NearbyLocationDto(latitude,longitude)) }
+    suspend fun nearby() = apiCall { api.nearby() }
+    suspend fun nearbyHide() = apiCall { api.nearbyHide() }
     suspend fun adminAccess() = apiCall {api.adminAccess()}
     suspend fun referral() = apiCall {api.referral()}
     suspend fun editReferral(code:String) = apiCall {api.editReferral(ReferralCodeDto(code))}

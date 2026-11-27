@@ -79,6 +79,14 @@ def backup():
     runtime = {k: v for k, v in env.items() if k.startswith("MANGO_SMTP_") or k in {
         "MANGO_JWT_SECRET", "MANGO_ADMIN_ENCRYPTION_KEY", "MANGO_MAIL_FROM", "MANGO_ENV", "MANGO_SPEECH_URL"
     }}
+    if env.get("MANGO_SMTP_KEY_FILE"):
+        runtime["smtp_key_material"] = command(["docker", "exec", BACKEND, "cat", env["MANGO_SMTP_KEY_FILE"]]).decode().strip()
+        if len(base64.b64decode(runtime["smtp_key_material"], validate=True)) != 32:
+            raise ValueError("Invalid SMTP key length")
+    if env.get("MANGO_CALLS_KEY_FILE"):
+        runtime["calls_key_material"] = command(["docker", "exec", BACKEND, "cat", env["MANGO_CALLS_KEY_FILE"]]).decode().strip()
+        if len(base64.b64decode(runtime["calls_key_material"], validate=True)) != 32:
+            raise ValueError("Invalid calls key length")
     nonce = os.urandom(12)
     (target / "runtime.enc").write_bytes(nonce + AESGCM(key).encrypt(nonce, json.dumps(runtime).encode(), AAD))
     # Keep a private deployment recipe, but never copy Firebase or signing keys.
@@ -138,14 +146,22 @@ def verify(directory, key_file):
     secret = runtime.get("MANGO_ADMIN_ENCRYPTION_KEY") or runtime["MANGO_JWT_SECRET"]
     smtp_key = hashlib.sha256(("mango-smtp-v1:" + secret).encode()).digest()
     for profile in profiles:
-        cipher = base64.b64decode(profile["password_cipher"])
-        clear = AESGCM(smtp_key).decrypt(cipher[:12], cipher[12:], None)
+        value = profile["password_cipher"]
+        modern = value.startswith("v2:")
+        cipher = base64.b64decode(value[3:] if modern else value)
+        active_key = base64.b64decode(runtime["smtp_key_material"]) if modern else smtp_key
+        clear = AESGCM(active_key).decrypt(cipher[:12], cipher[12:], b"mango-smtp-v2" if modern else None)
         if not clear:
             raise AssertionError("Empty recovered SMTP credential")
     # Verify encrypted runtime and SMTP recovery even when no real profile has a password.
     probe = b"restore-verification-only"
     iv = os.urandom(12)
     assert AESGCM(smtp_key).decrypt(iv, AESGCM(smtp_key).encrypt(iv, probe, None), None) == probe
+    if sql(name, "SELECT to_regclass('public.call_settings') IS NOT NULL") == "t":
+        for row in scalar_json(name, "SELECT COALESCE(json_agg(row_to_json(c)),'[]') FROM call_settings c"):
+            calls_key = hashlib.sha256(b"mango-calls-v1" + base64.b64decode(runtime["calls_key_material"])).digest()
+            encrypted = base64.b64decode(row["cipher"][3:])
+            json.loads(AESGCM(calls_key).decrypt(encrypted[:12], encrypted[12:], b"mango-smtp-v2"))
     settings = scalar_json(name, "SELECT row_to_json(s) FROM server_settings s WHERE id=1")
     report = {"ok": True, "backup": str(directory), "isolatedDatabase": name, "counts": manifest["counts"],
               "verifiedAttachments": len(files), "decryptedSmtpProfiles": len(profiles), "runtimeDecrypted": True,

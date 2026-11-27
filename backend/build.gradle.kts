@@ -19,6 +19,13 @@ subprojects {
         }
     }
 
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "com.fasterxml.jackson.core" && requested.name in setOf("jackson-core", "jackson-databind")) useVersion("2.22.3")
+            if (requested.group == "com.google.guava" && requested.name == "guava") useVersion("33.7.2-jre")
+        }
+    }
+
     dependencies {
         add("testImplementation", rootProject.libs.junit.jupiter)
         add("testImplementation", rootProject.libs.kotlin.test)

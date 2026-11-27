@@ -73,10 +73,10 @@ internal val NeutralVariant80 = Color(0xFFD6C3B4)
 internal val NeutralVariant90 = Color(0xFFF2E0D0)
 
 val MangoLightColorScheme = lightColorScheme(
-    primary = Color(0xFF1766D4),
+    primary = Color(0xFF235C49),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE4EFFF),
-    onPrimaryContainer = Color(0xFF163A68),
+    primaryContainer = Color(0xFFDDECD3),
+    onPrimaryContainer = Color(0xFF193E35),
     inversePrimary = Mango80,
 
     secondary = Teal40,
@@ -97,21 +97,21 @@ val MangoLightColorScheme = lightColorScheme(
     background = Color.White,
     onBackground = Neutral10,
     surface = Color.White,
-    onSurface = Color(0xFF192535),
-    surfaceVariant = Color(0xFFEEF2F7),
-    onSurfaceVariant = Color(0xFF596678),
-    surfaceTint = Color(0xFF1766D4),
+    onSurface = Color(0xFF203B31),
+    surfaceVariant = Color(0xFFEEF3EB),
+    onSurfaceVariant = Color(0xFF596B60),
+    surfaceTint = Color(0xFF235C49),
 
     surfaceDim = Neutral87,
     surfaceBright = Neutral98,
     surfaceContainerLowest = Color.White,
     surfaceContainerLow = Color.White,
-    surfaceContainer = Color(0xFFF1F4F9),
-    surfaceContainerHigh = Color(0xFFE9EEF6),
-    surfaceContainerHighest = Color(0xFFE2E9F2),
+    surfaceContainer = Color(0xFFF1F5EE),
+    surfaceContainerHigh = Color(0xFFE7EEE2),
+    surfaceContainerHighest = Color(0xFFDDE7D7),
 
     outline = NeutralVariant50,
-    outlineVariant = Color(0xFFDCE3ED),
+    outlineVariant = Color(0xFFD9E3D4),
     scrim = Color.Black,
 
     inverseSurface = Neutral20,
@@ -195,8 +195,8 @@ data class MangoSemanticColors(
 )
 
 internal val LightSemanticColors = MangoSemanticColors(
-    outgoingBubble = Color(0xFFE4EFFF),
-    onOutgoingBubble = Color(0xFF163A68),
+    outgoingBubble = Color(0xFFDDECD3),
+    onOutgoingBubble = Color(0xFF193E35),
     incomingBubble = Color.White,
     onIncomingBubble = Neutral10,
     online = Color(0xFF1B873B),
@@ -218,8 +218,8 @@ internal val LightSemanticColors = MangoSemanticColors(
 )
 
 internal val DarkSemanticColors = MangoSemanticColors(
-    outgoingBubble = Mango30,
-    onOutgoingBubble = Mango90,
+    outgoingBubble = Color(0xFF254C3D),
+    onOutgoingBubble = Color(0xFFDDECD3),
     incomingBubble = Neutral22,
     onIncomingBubble = Neutral90,
     online = Color(0xFF6BDD8B),

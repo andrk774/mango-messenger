@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Логотип Mango: стилизованный плод манго с листом, образующий форму
-     речевого пузыря. Оригинальная векторная графика. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -8,12 +6,14 @@
     android:viewportHeight="108">
 
     <path
-        android:fillColor="#FFD089"
-        android:pathData="M54,26c14,0 25,11 25,25c0,16 -13,27 -25,31c-12,-4 -25,-15 -25,-31C29,37 40,26 54,26z" />
+        android:fillColor="#FFC451"
+        android:pathData="M66,35C77,42 79,57 71,68C63,79 46,82 34,75L30,79L31,67C24,56 30,43 42,37C50,33 59,32 66,35Z" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M44,46h20v4h-20z M44,55h14v4h-14z" />
+        android:fillColor="#F4A32C"
+        android:pathData="M70,39C78,56 64,75 45,76C55,80 66,75 72,67C78,57 78,46 70,39Z" />
     <path
-        android:fillColor="#2F7D4F"
-        android:pathData="M54,26c0,-5 4,-9 10,-10c-1,6 -4,9 -10,10z" />
+        android:fillColor="#A9D982"
+        android:pathData="M53,32C54,23 63,21 74,24C70,33 62,36 53,32Z" />
+    <path android:fillColor="#FFF7DF"
+        android:pathData="M41,50Q41,48 43,48H64Q66,48 66,50Q66,52 64,52H43Q41,52 41,50Z M41,59Q41,57 43,57H57Q59,57 59,59Q59,61 57,61H43Q41,61 41,59Z" />
 </vector>

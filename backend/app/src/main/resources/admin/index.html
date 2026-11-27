@@ -1,18 +1,19 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mango · Управление</title><link rel="stylesheet" href="/admin/style.css"><script defer src="/admin/app.js"></script><script defer src="/admin/kubernetes.js"></script></head>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mango · Управление</title><link rel="stylesheet" href="/admin/style.css"><script defer src="/admin/browser-session.js"></script><script defer src="/admin/app.js"></script><script defer src="/admin/kubernetes.js"></script><link rel="icon" type="image/svg+xml" href="/admin/mango-mark.svg"></head>
 <body>
 <div id="notice" role="status" aria-live="polite"></div>
 <main id="login-screen" class="login-layout">
-  <section class="welcome"><div class="brand"><span class="logo">m</span> mango</div><p class="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</p><h1>Всё важное.<br>Под контролем.</h1><p>Пользователи, обращения и настройки вашего Mango — в одном месте.</p><div class="welcome-footer">Чаты объединяют людей.<br>Порядок начинается здесь.</div></section>
+  <section class="welcome"><div class="brand"><img class="logo brand-mark" src="/admin/mango-mark.svg" width="40" height="40" alt=""> mango</div><p class="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</p><h1>Всё важное.<br>Под контролем.</h1><p>Пользователи, обращения и настройки вашего Mango — в одном месте.</p><div class="welcome-footer">Чаты объединяют людей.<br>Порядок начинается здесь.</div></section>
   <section class="login-card"><p class="eyebrow">ДОБРО ПОЖАЛОВАТЬ</p><h2>Вход администратора</h2><p class="muted">Используйте аккаунт Mango с правами администратора сервиса.</p>
     <form id="login-form"><label>Email<input name="email" type="email" autocomplete="username" required></label><label>Пароль<input name="password" type="password" autocomplete="current-password" required></label><button class="primary" type="submit">Войти в панель</button></form>
     <p class="small muted">После обновления страницы потребуется повторный вход.</p>
   </section>
 </main>
 <div id="workspace" hidden>
-  <aside class="sidebar"><div class="brand"><span class="logo">m</span> mango</div><div class="sidebar-caption">УПРАВЛЕНИЕ</div><nav aria-label="Разделы панели">
+  <aside class="sidebar"><div class="brand"><img class="logo brand-mark" src="/admin/mango-mark.svg" width="40" height="40" alt=""> mango</div><div class="sidebar-caption">УПРАВЛЕНИЕ</div><nav aria-label="Разделы панели">
     <button data-tab="overview" class="active">Обзор сервера</button><button data-tab="users">Пользователи</button><button data-tab="reports">Жалобы</button><button data-tab="smtp">Почта / SMTP</button><button data-tab="settings">Настройки</button><button data-tab="audit">Журнал действий</button>
-  </nav><div class="sidebar-bottom"><span id="account-label"></span><button id="logout">Выйти</button></div></aside>
+    <button data-tab="promos">Промокоды</button>
+  <button data-tab="calls" hidden>LiveKit / TURN</button><button data-tab="analytics">Аналитика</button><button data-tab="support">Поддержка</button></nav><div class="sidebar-bottom"><span id="account-label"></span><button id="logout">Выйти</button></div></aside>
   <main class="content"><header class="page-header"><div><p class="eyebrow">MANGO ADMIN</p><h1 id="page-title">Обзор сервера</h1><p id="page-description" class="muted"></p></div><button id="refresh">Обновить ↻</button></header><div id="view" aria-live="polite"></div></main>
 </div>
 <dialog id="dialog"><div class="dialog-heading"><h2 id="dialog-title"></h2><button id="close-dialog" aria-label="Закрыть">✕</button></div><div id="dialog-body"></div></dialog>

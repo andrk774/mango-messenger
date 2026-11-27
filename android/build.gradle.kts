@@ -12,3 +12,14 @@ plugins {
     alias(libs.plugins.room) apply false
     alias(libs.plugins.google.services) apply false
 }
+
+subprojects {
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            // Hilt's reader must understand the metadata produced by Kotlin 2.4.
+            if (requested.group == "org.jetbrains.kotlin" && requested.name == "kotlin-metadata-jvm") {
+                useVersion("2.4.20")
+            }
+        }
+    }
+}

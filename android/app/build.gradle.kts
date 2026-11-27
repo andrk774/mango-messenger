@@ -149,6 +149,7 @@ dependencies {
     implementation(libs.hilt.work)
     ksp(libs.hilt.ext.compiler)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.okhttp)
 
     testImplementation(projects.core.testing)
     testImplementation(libs.robolectric)

@@ -20,4 +20,4 @@ configMapGenerator:
       - MANGO_STORAGE_DIR=/data/attachments
 images:
   - name: mango-backend
-    newTag: k8s-local
+    newTag: kubernetes-admin-20261122

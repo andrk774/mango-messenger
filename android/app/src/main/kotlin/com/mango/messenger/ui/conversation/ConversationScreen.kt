@@ -30,7 +30,13 @@ import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Call
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.EmojiEmotions
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -157,6 +163,7 @@ fun ConversationScreen(
         containerColor = com.mango.messenger.ui.settings.chatBackgroundColor(appearance.chatBackground),
         topBar = {
             ConversationTopAppBar(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).clip(RoundedCornerShape(28.dp)),
                 title = state.title,
                 initials = state.title.initials(),
                 avatarUrl = state.conversation?.avatarUrl,
@@ -168,10 +175,15 @@ fun ConversationScreen(
                 onNavigateBack = onNavigateBack,
                 onTitleClick = if (state.isGroup) ({ onOpenInfo(state.conversationId) }) else null,
                 actions = {
-                    androidx.compose.material3.TextButton(onClick = { showSearch = true }) { Text("Поиск") }
-                    if (state.isGroup) {
-                        IconButton(onClick = { onOpenInfo(state.conversationId) }) {
-                            Icon(Icons.Outlined.Info, contentDescription = "О группе")
+                    IconButton(onClick={context.startActivity(Intent(context,CallActivity::class.java).putExtra("conversationId",state.conversationId).putExtra("video",false))}) {Icon(Icons.Outlined.Call,contentDescription="Аудиозвонок")}
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick={menu=true}) {Icon(Icons.Outlined.MoreVert,"Меню чата")}
+                        androidx.compose.material3.DropdownMenu(expanded=menu,onDismissRequest={menu=false},shape=RoundedCornerShape(24.dp)) {
+                            androidx.compose.material3.DropdownMenuItem(text={Text("Видеозвонок")},leadingIcon={Icon(Icons.Outlined.Videocam,null)},onClick={menu=false;context.startActivity(Intent(context,CallActivity::class.java).putExtra("conversationId",state.conversationId).putExtra("video",true))})
+                            androidx.compose.material3.DropdownMenuItem(text={Text("Поиск")},leadingIcon={Icon(Icons.Outlined.Search,null)},onClick={menu=false;showSearch=true})
+                            androidx.compose.material3.DropdownMenuItem(text={Text("Стикеры")},leadingIcon={Icon(Icons.Outlined.EmojiEmotions,null)},onClick={menu=false;showStickers=true})
+                            if(state.isGroup) androidx.compose.material3.DropdownMenuItem(text={Text("Участники")},leadingIcon={Icon(Icons.Outlined.Info,null)},onClick={menu=false;onOpenInfo(state.conversationId)})
                         }
                     }
                 },
@@ -208,17 +220,14 @@ fun ConversationScreen(
                 )
             }
 
-            VoiceComposer(onSend = viewModel::sendUncaptionedAttachment)
-            Row {
-                androidx.compose.material3.TextButton(onClick = { showEmoji = true }) { Text("☺ Эмоджи") }
-                androidx.compose.material3.TextButton(onClick = { showStickers = true }) { Text("Стикеры") }
-            }
             Composer(
                 text = state.composerText,
                 canSend = state.canSend,
                 onTextChange = viewModel::onComposerChange,
                 onSend = viewModel::send,
                 onAttach = { pickFile.launch(ATTACHABLE_TYPES) },
+                onEmoji = { showEmoji = true },
+                onVoiceSend = viewModel::sendUncaptionedAttachment,
             )
         }
     }
@@ -487,49 +496,23 @@ private fun UploadState(attachment: Attachment, modifier: Modifier = Modifier) {
 
 @Composable
 private fun Composer(
-    text: String,
-    canSend: Boolean,
-    onTextChange: (String) -> Unit,
-    onSend: () -> Unit,
-    onAttach: () -> Unit,
+    text: String, canSend: Boolean, onTextChange: (String) -> Unit,
+    onSend: () -> Unit, onAttach: () -> Unit, onEmoji: () -> Unit,
+    onVoiceSend: suspend (android.net.Uri) -> Boolean,
 ) {
-    Surface(tonalElevation = 3.dp) {
-        Column {
-            HorizontalDivider()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                IconButton(onClick = onAttach, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.AttachFile, contentDescription = "Прикрепить файл")
-                }
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Сообщение") },
-                    maxLines = 5,
-                    shape = MaterialTheme.shapes.extraLarge,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                )
-                Spacer(Modifier.width(8.dp))
-                IconButton(
-                    onClick = onSend,
-                    enabled = canSend,
-                    modifier = Modifier.size(48.dp),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Отправить",
-                        tint = if (canSend) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.outline
-                        },
-                    )
+    Surface(modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp),
+        shape = RoundedCornerShape(30.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), shadowElevation = 2.dp) {
+        Box(Modifier.padding(4.dp)) {
+            VoiceComposer(onSend = onVoiceSend, showRecordButton = text.isBlank()) {
+                IconButton(onClick = onEmoji) { Icon(Icons.Outlined.EmojiEmotions, "Эмоджи") }
+                androidx.compose.foundation.text.BasicTextField(value = text, onValueChange = onTextChange,
+                    modifier = Modifier.weight(1f).padding(vertical = 12.dp), maxLines = 5,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { inner -> Box { if(text.isEmpty()) Text("Сообщение", color = MaterialTheme.colorScheme.onSurfaceVariant);inner() } })
+                IconButton(onClick = onAttach) { Icon(Icons.Outlined.AttachFile, "Прикрепить файл") }
+                if(text.isNotBlank()) androidx.compose.material3.FilledIconButton(onClick = onSend, enabled = canSend, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.Send, "Отправить")
                 }
             }
         }

@@ -27,6 +27,8 @@ import com.mango.core.designsystem.component.SectionHeader
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Unit,
+    onNearby:()->Unit,
+    openRootRequest:Int=0,
     modifier:Modifier=Modifier,viewModel:SettingsViewModel=hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
@@ -41,6 +43,17 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
     var password by remember {mutableStateOf(false)}
     var menu by remember {mutableStateOf(false)}
     val scroll=rememberScrollState()
+    var handledRootRequest by rememberSaveable { mutableIntStateOf(openRootRequest) }
+    LaunchedEffect(openRootRequest) {
+        if (handledRootRequest != openRootRequest) {
+            page=null
+            edit=false
+            password=false
+            menu=false
+            scroll.scrollTo(0)
+            handledRootRequest=openRootRequest
+        }
+    }
     val context=LocalContext.current
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {uri->uri?.let {viewModel.uploadAvatar(context.applicationContext,it)}}
     val user=state.currentUser
@@ -51,7 +64,7 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
     LaunchedEffect(Unit) {viewModel.refreshAccount()}
     BackHandler(page!=null) {page=null}
     Scaffold(modifier=modifier,containerColor=MaterialTheme.colorScheme.surfaceContainer,
-        topBar={TopAppBar(title={Text(page ?: if(scroll.value>240) user?.displayName ?: "Профиль" else "")},
+        topBar={TopAppBar(title={if(page!=null || scroll.value>240) Text(page ?: user?.displayName ?: "Профиль")},
             navigationIcon={if(page!=null) IconButton(onClick={page=null}) {Icon(Icons.AutoMirrored.Filled.ArrowBack,"Назад")}},
             actions={if(page==null) Box {
                 IconButton(onClick={menu=true}) {Icon(Icons.Default.MoreHoriz,"Меню профиля")}
@@ -64,10 +77,10 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
             if(page==null) {
                 Column(Modifier.fillMaxWidth().padding(bottom=20.dp),horizontalAlignment=Alignment.CenterHorizontally) {
                     Box {
-                        MangoAvatar(user?.initials ?: "?", imageUrl=user?.avatarUrl,seed=user?.id?.value ?: "me",size=104.dp)
+                        MangoAvatar(user?.initials ?: "?", imageUrl=user?.avatarUrl,seed=user?.id?.value ?: "me",size=80.dp)
                         FilledIconButton(onClick={picker.launch("image/*")},enabled=!avatarBusy,modifier=Modifier.align(Alignment.BottomEnd)) {Icon(Icons.Default.PhotoCamera,"Изменить фото")}
                     }
-                    Text(user?.displayName ?: "Профиль",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,
+                    Text(user?.displayName ?: "Профиль",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,
                         modifier=Modifier.padding(top=12.dp).clickable {edit=true})
                     Text("Мой профиль",color=MaterialTheme.colorScheme.onSurfaceVariant)
                     avatarMessage?.let {Text(it,Modifier.padding(12.dp))}
@@ -86,25 +99,27 @@ fun SettingsScreen(onSignOut:()->Unit,onContacts:()->Unit,onNotifications:()->Un
                 SettingsLink("Баллы Mango · ${account.balance?.points ?: "…"}",Icons.Default.Star) {page="Баллы и подписка"}
                 Spacer(Modifier.height(12.dp))
                 SettingsLink("Реферальная программа",Icons.Default.PersonAdd) {page="Реферальная программа"}
+                SettingsLink("Промокоды",Icons.Default.Redeem) {page="Промокоды"}
                 SettingsLink("Контакты",Icons.Default.Person,onClick=onContacts)
+                SettingsLink("Люди рядом",Icons.Default.NearMe,onClick=onNearby)
                 SettingsLink("Центр уведомлений",Icons.Default.Notifications,onClick=onNotifications)
                 Spacer(Modifier.height(12.dp))
                 SettingsLink("Внешний вид",Icons.Default.Palette) {page="Внешний вид"}
+                SettingsLink("Иконка приложения",Icons.Default.Image) {page="Иконка приложения"}
                 SettingsLink("Фон чата",Icons.Default.Wallpaper) {page="Фон чата"}
                 SettingsLink("Уведомления",Icons.Default.Notifications) {page="Уведомления"}
                 SettingsLink("Данные и синхронизация",Icons.Default.Storage) {page="Данные и синхронизация"}
                 SettingsLink("Конфиденциальность",Icons.Default.Lock) {page="Конфиденциальность"}
+                SettingsLink("Служба поддержки",Icons.Default.HelpOutline) {page="Служба поддержки"}
                 if(adminAccess) SettingsLink("Админ-панель",Icons.Default.AdminPanelSettings) {
-                    val uri=android.net.Uri.parse(com.mango.messenger.BuildConfig.SERVER_URL.trimEnd('/')+"/admin/")
-                    try {
-                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,uri))
-                    } catch(_:android.content.ActivityNotFoundException) {
-                        android.widget.Toast.makeText(context,"Не найден браузер для открытия админ-панели",android.widget.Toast.LENGTH_LONG).show()
-                    }
+                    context.startActivity(android.content.Intent(context,AdminPanelActivity::class.java))
                 }
                 TextButton(onClick=onSignOut,modifier=Modifier.fillMaxWidth().padding(16.dp)) {Text("Выйти из аккаунта",color=MaterialTheme.colorScheme.error)}
                 Text("Mango ${com.mango.messenger.BuildConfig.VERSION_NAME}",Modifier.align(Alignment.CenterHorizontally).padding(bottom=24.dp),color=MaterialTheme.colorScheme.onSurfaceVariant)
             } else when(page) {
+                "Служба поддержки" -> SupportSettings()
+                "Иконка приложения" -> AppIconSettings()
+                "Промокоды" -> PromoSettings(onSuccess={viewModel.refreshAccount()})
                 "Mango Premium" -> {
                     Text("Поддержите развитие Mango",Modifier.padding(20.dp),style=MaterialTheme.typography.headlineSmall)
                     Text("Все функции Mango бесплатны. Premium — добровольная поддержка проекта, а не доступ к закрытым функциям. Получите 7 дней Premium по приглашению друга.",Modifier.padding(horizontal=20.dp))

@@ -127,13 +127,15 @@ fun Route.authRoutes(
         }
 
         post("/login") {
+            val browser = browserSession()
             val body = call.receive<LoginRequest>()
             enforceLimit(
                 limiter = rateLimiter,
-                key = "login:${body.email.trim().lowercase()}:${call.clientIp() ?: "unknown"}",
+                key = "login-account:${body.email.trim().lowercase()}",
                 limit = RateLimits.LOGIN_LIMIT,
                 window = RateLimits.LOGIN_WINDOW,
             )
+            enforceLimit(rateLimiter, "login-ip:${call.clientIp() ?: "unknown"}", 100, RateLimits.LOGIN_WINDOW)
             val result = service.login(
                 LoginCommand(
                     email = body.email,
@@ -149,17 +151,26 @@ fun Route.authRoutes(
                     userAgent = call.request.userAgent(),
                 ),
             )
-            call.respond(HttpStatusCode.OK, result.toResponse())
+            if (browser) setBrowserSession(result.refreshToken, result.refreshExpiresAt)
+            call.respond(HttpStatusCode.OK, result.toResponse().let { if (browser) it.copy(refreshToken = "browser-cookie") else it })
         }
 
         post("/refresh") {
+            val browser = browserSession()
             val body = call.receive<RefreshRequest>()
             val result = service.refresh(
-                refreshToken = body.refreshToken,
+                refreshToken = if (browser) browserRefresh() else body.refreshToken,
                 ip = call.clientIp(),
                 userAgent = call.request.userAgent(),
             )
-            call.respond(HttpStatusCode.OK, result.toResponse())
+            if (browser) setBrowserSession(result.refreshToken, result.refreshExpiresAt)
+            call.respond(HttpStatusCode.OK, result.toResponse().let { if (browser) it.copy(refreshToken = "browser-cookie") else it })
+        }
+
+        post("/browser-clear") {
+            if (!browserSession()) throw AppException.Forbidden("Browser header required")
+            clearBrowserSession()
+            call.respond(HttpStatusCode.NoContent)
         }
 
         post("/password/forgot") {
@@ -196,8 +207,10 @@ fun Route.authRoutes(
         authenticate(JWT_AUTH) {
 
             post("/logout") {
+                val browser = browserSession()
                 val caller = callerIdentity()
                 service.logout(caller.sessionId)
+                if (browser) clearBrowserSession()
                 call.respond(HttpStatusCode.NoContent)
             }
 
@@ -236,25 +249,18 @@ fun Route.authRoutes(
     }
 }
 
-/**
- * Адрес клиента.
- *
- * За обратным прокси реальный адрес приходит в X-Forwarded-For. Берётся
- * ПЕРВЫЙ элемент списка, но доверять ему можно только при корректно
- * настроенном прокси: заголовок подделывается клиентом. Значение
- * используется лишь для журнала сессий, не для принятия решений о доступе.
- */
-internal fun io.ktor.server.application.ApplicationCall.clientIp(): String? {
-    val forwarded = request.headers[HttpHeaders.XForwardedFor]
-        ?.split(',')
-        ?.firstOrNull()
-        .toIpLiteralOrNull()
+/** Only explicitly trusted literal peer IPs may supply forwarded addresses. */
+internal fun io.ktor.server.application.ApplicationCall.clientIp(): String? =
+    resolveClientIp(request.local.remoteAddress, request.headers[HttpHeaders.XForwardedFor],
+        System.getenv("MANGO_TRUSTED_PROXY_IPS").orEmpty().split(',').mapNotNull { it.trim().toIpLiteralOrNull() }.toSet())
 
-    // Проверка обязательна: значение попадает в колонку типа inet, и любая
-    // строка, не являющаяся адресом, прервала бы транзакцию входа.
-    // Заголовок управляется клиентом, поэтому без проверки это был бы
-    // способ сломать аутентификацию одним запросом.
-    return forwarded ?: request.origin.remoteAddress.toIpLiteralOrNull()
+fun resolveClientIp(peer: String, forwarded: String?, trusted: Set<String>): String? {
+    val direct = peer.toIpLiteralOrNull() ?: return null
+    if (direct !in trusted || forwarded.isNullOrBlank()) return direct
+    val hops = forwarded.split(',')
+    if (hops.size > 16) return direct
+    val parsed = hops.map { it.trim().toIpLiteralOrNull() ?: return direct }
+    return (parsed + direct).asReversed().firstOrNull { it !in trusted } ?: direct
 }
 
 const val JWT_AUTH = "jwt"

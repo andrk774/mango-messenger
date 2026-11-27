@@ -99,6 +99,9 @@ services:
       MANGO_MAIL_FROM: ${MANGO_MAIL_FROM:-noreply@mango.local}
       MANGO_JWT_SECRET: ${MANGO_JWT_SECRET:?нужно задать MANGO_JWT_SECRET в .env}
       MANGO_ADMIN_ENCRYPTION_KEY: ${MANGO_ADMIN_ENCRYPTION_KEY:-}
+      MANGO_SMTP_KEY_FILE: /run/secrets/mango/smtp-encryption.key
+      MANGO_CALLS_KEY_FILE: /run/secrets/mango/calls-encryption.key
+      MANGO_TRUSTED_PROXY_IPS: ${MANGO_TRUSTED_PROXY_IPS:-}
       MANGO_SPEECH_URL: http://speech:8090
       MANGO_STORAGE_DIR: /data/attachments
       # Ключ Firebase (см. README, «Push-уведомления»). Нет файла —

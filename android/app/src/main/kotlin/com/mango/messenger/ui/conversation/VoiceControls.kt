@@ -1,6 +1,11 @@
 package com.mango.messenger.ui.conversation
 
 import android.Manifest
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.shape.CircleShape
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
@@ -27,7 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 
 @Composable
-internal fun VoiceComposer(onSend: suspend (android.net.Uri) -> Boolean) {
+internal fun VoiceComposer(onSend: suspend (android.net.Uri) -> Boolean, showRecordButton: Boolean = true, leading: @Composable RowScope.() -> Unit = {}) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
@@ -36,6 +41,23 @@ internal fun VoiceComposer(onSend: suspend (android.net.Uri) -> Boolean) {
     var draft by remember { mutableStateOf<File?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var sending by remember { mutableStateOf(false) }
+    var videoMode by remember { mutableStateOf(false) }
+    var pendingVideo by remember { mutableStateOf<File?>(null) }
+    val videoCapture = rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo()) { saved ->
+        if(saved)draft=pendingVideo
+        pendingVideo=null
+    }
+    fun captureVideo() {
+        try {
+            val directory=File(context.cacheDir,"attachments/video").apply{mkdirs()}
+            val file=File(directory,"video-${java.util.UUID.randomUUID()}.mp4")
+            pendingVideo=file
+            videoCapture.launch(FileProvider.getUriForFile(context,"${context.packageName}.files",file))
+        } catch(_:Exception){error="Не удалось открыть камеру";pendingVideo=null}
+    }
+    val cameraPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->
+        if(granted)captureVideo() else error="Для видеосообщения разрешите камеру"
+    }
     fun finish() {
         val current = recorder ?: return
         recorder = null
@@ -74,14 +96,27 @@ internal fun VoiceComposer(onSend: suspend (android.net.Uri) -> Boolean) {
     Column {
         error?.let { Text(it) }
         if (recorder != null) Text("Идёт запись · максимум 2 минуты")
-        Column {
-            if (draft == null) TextButton(onClick = {
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            leading()
+            if (draft == null && (showRecordButton || recorder != null)) androidx.compose.material3.Surface(shape=CircleShape,color=MaterialTheme.colorScheme.primary,
+                modifier=Modifier.size(48.dp).combinedClickable(onDoubleClick={if(recorder==null)videoMode=!videoMode},onClick = {
                 if (recorder != null) finish()
+                else if(videoMode){if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)captureVideo() else cameraPermission.launch(Manifest.permission.CAMERA)}
                 else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) start()
                 else permission.launch(Manifest.permission.RECORD_AUDIO)
-            }) { Text(if (recorder == null) "Записать голосовое" else "Остановить") }
+            })) {Box(contentAlignment=androidx.compose.ui.Alignment.Center){androidx.compose.material3.Icon(if (recorder != null) androidx.compose.material.icons.Icons.Default.Stop else if(videoMode)androidx.compose.material.icons.Icons.Default.Videocam else androidx.compose.material.icons.Icons.Default.Mic,
+                if(recorder!=null)"Остановить запись" else if(videoMode)"Записать видеосообщение. Двойное нажатие — микрофон" else "Записать голосовое. Двойное нажатие — камера")}}
+        }
+        Column {
             draft?.let { file ->
-                VoicePlayback(file.name, load = { file })
+                if(file.extension=="mp4") {
+                    Text("Предпросмотр видеосообщения")
+                    androidx.compose.ui.viewinterop.AndroidView(factory={ctx->android.widget.VideoView(ctx).apply{
+                        setVideoPath(file.absolutePath)
+                        setMediaController(android.widget.MediaController(ctx).also{it.setAnchorView(this)})
+                        setOnPreparedListener{seekTo(1)}
+                    }},modifier=Modifier.fillMaxWidth().height(200.dp),onRelease={it.stopPlayback()})
+                }else VoicePlayback(file.name, load = { file })
                 TextButton(enabled = !sending, onClick = {
                     scope.launch {
                         sending = true

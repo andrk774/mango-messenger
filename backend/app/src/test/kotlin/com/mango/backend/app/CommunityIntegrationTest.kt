@@ -29,8 +29,10 @@ class CommunityIntegrationTest:IntegrationTestBase() {
         val user=client.newUser("user@example.com","regular");val id=client.id(user)
         for(path in listOf("/users/$id/balance","/users/$id/password","/users/$id/identity","/users/$id/role","/smtp-profiles","/settings"))
             assertEquals(HttpStatusCode.Forbidden,client.change(mod,path).status,path)
-        for(path in listOf("/smtp-profiles","/settings","/audit","/users/$id/ledger"))
+        for(path in listOf("/smtp-profiles","/settings","/users/$id/ledger"))
             assertEquals(HttpStatusCode.Forbidden,client.get("/v1/admin$path"){bearerAuth(mod.accessToken)}.status,path)
+        assertEquals(HttpStatusCode.OK,client.get("/v1/admin/audit"){bearerAuth(mod.accessToken)}.status)
+        assertEquals(HttpStatusCode.Forbidden,client.get("/v1/admin/audit"){bearerAuth(user.accessToken)}.status)
         assertEquals(HttpStatusCode.OK,client.get("/v1/admin/users"){bearerAuth(mod.accessToken)}.status)
         val report=client.post("/v1/reports"){bearerAuth(user.accessToken);contentType(ContentType.Application.Json);setBody(buildJsonObject {put("targetId",id.toString());put("reason","Moderation test")})}.body<JsonObject>()["id"]!!.jsonPrimitive.content
         assertEquals(HttpStatusCode.OK,client.change(mod,"/reports/$report",buildJsonObject {put("status","RESOLVED");put("resolution","Reviewed")}).status)

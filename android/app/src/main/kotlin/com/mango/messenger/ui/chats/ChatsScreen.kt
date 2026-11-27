@@ -65,6 +65,8 @@ fun ChatsScreen(
     val newChat by viewModel.newChat.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showSearch by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var plusMenu by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val context=androidx.compose.ui.platform.LocalContext.current
 
     LaunchedEffect(startNewChat) { if(startNewChat) viewModel.openNewChat() }
     LaunchedEffect(Unit) {
@@ -107,9 +109,9 @@ fun ChatsScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(onClick = viewModel::openNewChat,shape=androidx.compose.foundation.shape.CircleShape,
+            FloatingActionButton(onClick = {plusMenu=true},shape=androidx.compose.foundation.shape.CircleShape,
                 containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary) {
-                Icon(Icons.Default.Add, contentDescription = "Новая переписка")
+                Icon(Icons.Default.Add, contentDescription = "Добавить")
             }
         },
     ) { padding ->
@@ -159,6 +161,10 @@ fun ChatsScreen(
             onDismiss = viewModel::closeNewChat,
         )
     }
+    if(plusMenu) androidx.compose.material3.AlertDialog(onDismissRequest={plusMenu=false},title={Text("Добавить")},text={Column{
+        androidx.compose.material3.TextButton(onClick={plusMenu=false;viewModel.openNewChat()}){Text("Новый чат")}
+        for(label in listOf("Контакты на телефоне","Облачная синхронизация")) androidx.compose.material3.TextButton(onClick={plusMenu=false;context.startActivity(android.content.Intent(context,com.mango.messenger.ui.misc.PhoneContactsActivity::class.java).putExtra("pick",label=="Контакты на телефоне"))}){Text(label)}
+    }},confirmButton={androidx.compose.material3.TextButton(onClick={plusMenu=false}){Text("Закрыть")}})
 }
 
 @Composable

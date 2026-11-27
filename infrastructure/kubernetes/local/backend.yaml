@@ -50,6 +50,9 @@ spec:
         - name: backend
           image: mango-backend
           imagePullPolicy: IfNotPresent
+          env:
+            - name: MANGO_SMTP_KEY_FILE
+              value: /run/secrets/smtp/smtp-encryption.key
           ports:
             - name: http
               containerPort: 8080
@@ -89,11 +92,18 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
           volumeMounts:
+            - name: smtp-key
+              mountPath: /run/secrets/smtp
+              readOnly: true
             - name: attachments
               mountPath: /data/attachments
             - name: temporary
               mountPath: /tmp
       volumes:
+        - name: smtp-key
+          secret:
+            secretName: mango-smtp-key
+            defaultMode: 0440
         - name: attachments
           persistentVolumeClaim:
             claimName: mango-attachments

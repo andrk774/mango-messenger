@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +46,11 @@ fun AuthScreen(
     modifier: Modifier = Modifier,
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
+    var offline by remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (offline) {
+        com.mango.messenger.ui.nearby.MeshPanel(onBack = { offline = false })
+        return
+    }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -71,6 +77,7 @@ fun AuthScreen(
             verticalArrangement = Arrangement.Center,
         ) {
             Spacer(Modifier.height(28.dp))
+            androidx.compose.material3.TextButton(onClick = { offline = true }) { Text("Общаться без интернета") }
             com.mango.core.designsystem.component.MangoArtwork()
             Spacer(Modifier.height(16.dp))
 

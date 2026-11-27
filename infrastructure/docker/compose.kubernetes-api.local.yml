@@ -1,0 +1,11 @@
+# Optional network access from Compose backend to Docker Desktop's kind cluster.
+# Use only if docker network inspect kind confirms that network exists.
+services:
+  backend:
+    networks:
+      - default
+      - kubernetes-control
+networks:
+  kubernetes-control:
+    external: true
+    name: kind

@@ -2,7 +2,12 @@
 
 Добавлен отдельный локальный стенд Kustomize. Существующий Docker Compose и его данные не меняются. Это подготовка запуска в Kubernetes, а не публикация Mango в интернете.
 
-Проверено 19 ноября 2026: обе конфигурации собираются через `kubectl kustomize`; kubeconform v0.8.0 в строгом режиме проверил 22 ресурса — все корректны, ошибок и пропусков нет. Синтаксис PowerShell-скрипта проверен без генерации секретов. Kubernetes-контекст на ноутбуке не настроен, поэтому server-side dry-run, запуск Pod, подключение томов и проверка приложения в кластере ещё не выполнены. Это не проверка готовности промышленного развёртывания.
+Проверено 22 ноября 2026: локальный `docker-desktop`, Kubernetes v1.36.1.
+Server-side dry-run прошёл; backend, PostgreSQL, Redis и Mailpit Ready, три PVC Bound.
+Проверены регистрация, email через Mailpit, вход, сообщения, вложения и назначенные
+задачи. После перезапуска PostgreSQL/backend данные и идентификаторы томов сохранились.
+См. [отчёт приёмки](../../docs/reports/kubernetes-acceptance-2026-11-22.md).
+Внешний кластер, публичный HTTPS, внешний SMTP и FCM этим прогоном не проверялись.
 
 ## Состав
 
@@ -21,10 +26,10 @@
 ```powershell
 kubectl config get-contexts
 kubectl --context docker-desktop get storageclass
-docker build -t mango-backend:k8s-local backend
+docker build -t mango-backend:kubernetes-admin-20261122 backend
 ```
 
-Образ должен быть доступен узлам кластера. В kind загрузите его через `kind load docker-image mango-backend:k8s-local --name <cluster>`. Для удалённого кластера используйте свой registry и замените image в Kustomization. Наличие образа в Docker хоста не гарантирует его наличие в containerd узла.
+Образ должен быть доступен узлам кластера. В kind загрузите его через `kind load docker-image mango-backend:kubernetes-admin-20261122 --name <cluster>`. Для удалённого кластера используйте свой registry и замените image в Kustomization. Наличие образа в Docker хоста не гарантирует его наличие в containerd узла. Для следующей сборки используйте новый тег или digest: не переиспользуйте тег с `IfNotPresent`, иначе узел может запустить старый кешированный образ.
 
 Создание отдельных локальных секретов (Windows PowerShell, значения не выводятся):
 
@@ -32,9 +37,16 @@ docker build -t mango-backend:k8s-local backend
 powershell -NoProfile -File infrastructure/kubernetes/prepare-secrets.ps1
 kubectl --context docker-desktop apply -f infrastructure/kubernetes/local/namespace.yaml
 kubectl --context docker-desktop -n mango-dev create secret generic mango-runtime --from-env-file=secrets/kubernetes/runtime.env
+kubectl --context docker-desktop -n mango-dev create secret generic mango-smtp-key --from-file=secrets/kubernetes/smtp-encryption.key
 ```
 
 Скрипт отказывается перезаписывать существующий файл. Не добавляйте `runtime.env` в Git. После инициализации PostgreSQL смена Secret сама по себе не меняет пароль внутри существующей БД: ротация требует согласованного обновления PostgreSQL и backend.
+
+SMTP использует отдельный ключ, монтируемый только для чтения; ключ Compose не
+копируется. Если `runtime.env` был создан старой версией скрипта, создайте только
+недостающий ключ командой `./scripts/initialize-smtp-key.ps1 -KeyPath secrets/kubernetes/smtp-encryption.key`.
+Существующий ключ никогда не перезаписывайте. Сохраните его вместе с защищёнными
+резервными копиями настроек; без него сохранённые пароли SMTP не расшифруются.
 
 ```powershell
 kubectl kustomize infrastructure/kubernetes/local
@@ -56,6 +68,13 @@ kubectl --context docker-desktop -n mango-dev port-forward service/mailpit 18026
 ```
 
 API: `http://127.0.0.1:18081/v1/health/ready`; почта: `http://127.0.0.1:18026`. Эти адреса не доступны напрямую с Galaxy. Текущий APK продолжает обращаться к `https://mango.home.arpa/` и Compose. Переключение Android требует отдельного HTTPS-маршрута к кластеру и проверки WebSocket/вложений; оно не выполнено автоматически.
+
+Повторяемая локальная приёмка: `python scripts/test-kubernetes-local.py --execute-local`.
+Скрипт явно ограничен `docker-desktop/mango-dev`, временно использует localhost-порты
+28081/28026, создаёт помеченных тестовых пользователей и данные, перезапускает только
+PostgreSQL/backend этого стенда и проверяет сохранность. Тестовые данные остаются;
+временные port-forward процессы завершаются. Не запускайте его в окно работы
+других пользователей стенда без согласованного перерыва.
 
 ## Firebase по желанию
 

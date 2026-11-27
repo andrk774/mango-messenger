@@ -1,0 +1,11 @@
+[
+  {
+    "context": "docker-desktop",
+    "server": "https://kubernetes.docker.internal:6443",
+    "namespace": "mango-dev",
+    "deployment": "backend",
+    "service": "backend",
+    "tokenFile": "/run/secrets/mango/kubernetes/local.token",
+    "caFile": "/run/secrets/mango/kubernetes/local-ca.crt"
+  }
+]

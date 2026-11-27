@@ -14,14 +14,24 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.*
 
-fun Route.webRoutes(database:Database) {
+fun Route.webRoutes(database:Database,limiter:com.mango.backend.common.RateLimiter=com.mango.backend.common.InMemoryRateLimiter(com.mango.backend.common.SystemTime),calls:CallSettingsStore?=null) {
     referralRoutes(database)
+    promoContactRoutes(database)
+    callRoutes(database,limiter=limiter,provider={calls?.current()?:CallConfig.load()})
     for ((path,file,type) in listOf(
+        Triple("/web/mango-mark.svg","mango-mark.svg","image/svg+xml"),
+        Triple("/web/admin-sso.js","admin-sso.js","application/javascript"),
+        Triple("/web/browser-session.js","browser-session.js","application/javascript"),
+        Triple("/admin/browser-session.js","browser-session.js","application/javascript"),
+        Triple("/admin/mango-mark.svg","mango-mark.svg","image/svg+xml"),
         Triple("/","index.html","text/html"),Triple("/web","web.html","text/html"),Triple("/web/","web.html","text/html"),
-        Triple("/web/app.js","app.js","application/javascript"),Triple("/web/welcome.js","welcome.js","application/javascript"),Triple("/web/style.css","style.css","text/css"),
+        Triple("/web/call.html","call.html","text/html"),Triple("/web/call.css","call.css","text/css"),Triple("/web/call.js","call.js","application/javascript"),Triple("/web/calls-ui.js","calls-ui.js","application/javascript"),Triple("/web/livekit-client.umd.js","livekit-client.umd.js","application/javascript"),
+        Triple("/web/studio.css","studio.css","text/css"),Triple("/web/kanban.css","kanban.css","text/css"),Triple("/web/chat-live.js","chat-live.js","application/javascript"),Triple("/web/kanban.js","kanban.js","application/javascript"),Triple("/web/media.js","media.js","application/javascript"),Triple("/web/app.js","app.js","application/javascript"),Triple("/web/welcome.js","welcome.js","application/javascript"),Triple("/web/style.css","style.css","text/css"),
     )) get(path) {
         call.response.headers.append("Cache-Control","no-store")
-        call.response.headers.append("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+        val mediaOrigin=if(file=="call.html") runCatching {(calls?.current()?:CallConfig.load()).takeIf{it.configured}?.origin().orEmpty()}.getOrDefault("") else ""
+        val mediaHttp=mediaOrigin.replaceFirst("wss://","https://").replaceFirst("ws://","http://")
+        call.response.headers.append("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' $mediaOrigin $mediaHttp; frame-src 'self'; worker-src 'self' blob:; img-src 'self' blob: data:; media-src 'self' blob:; base-uri 'none'; frame-ancestors ${if(file=="call.html") "'self'" else "'none'"}; form-action 'self'")
         call.respondText(checkNotNull(AdminService::class.java.classLoader.getResource("web/$file")).readText(),ContentType.parse(type))
     }
     get("/v1/site") {

@@ -20,6 +20,34 @@ import java.util.UUID
 import kotlin.test.*
 
 class AdminIntegrationTest:IntegrationTestBase() {
+    @Test fun `external cluster profiles enforce roles validate all fields and persist without secrets`()=withApp { client ->
+        val admin=client.admin()
+        val user=client.newUser("external-user@example.test","externaluser")
+        val path="/kubernetes/external"
+        val profile=buildJsonObject {
+            put("name","production");put("context","external-mango");put("namespace","mango-prod")
+            put("deployment","backend");put("service","backend");put("publicHost","mango.example.com")
+        }
+        fun body(items:List<JsonObject>)=buildJsonObject {put("profiles",JsonArray(items))}
+        assertEquals(HttpStatusCode.Unauthorized,client.get("/v1/admin$path").status)
+        assertEquals(HttpStatusCode.Forbidden,client.change(user,path,body(listOf(profile))).status)
+        assertEquals(HttpStatusCode.OK,client.change(admin,path,body(listOf(profile))).status)
+        assertEquals(JsonArray(listOf(profile)),client.get("/v1/admin$path") {bearerAuth(admin.accessToken)}.body<JsonArray>())
+        for((field,value) in listOf("context" to "x;whoami","publicHost" to "https://user:secret@example.com","namespace" to "$(whoami)","token" to "never-store")) {
+            val bad=JsonObject(profile+mapOf(field to JsonPrimitive(value)))
+            assertEquals(HttpStatusCode.UnprocessableEntity,client.change(admin,path,body(listOf(bad))).status)
+        }
+        assertEquals(HttpStatusCode.UnprocessableEntity,client.change(admin,path,body(listOf(profile,profile))).status)
+        assertEquals(HttpStatusCode.UnprocessableEntity,client.change(admin,path,body(List(6){profile})).status)
+        assertEquals(JsonArray(listOf(profile)),client.get("/v1/admin$path") {bearerAuth(admin.accessToken)}.body<JsonArray>())
+        val adminId=client.id(admin)
+        database.transaction {it.update("UPDATE service_admins SET role='MODERATOR' WHERE user_id=?",adminId)}
+        assertEquals(HttpStatusCode.Forbidden,client.change(admin,path,body(emptyList())).status)
+        assertEquals(HttpStatusCode.Forbidden,client.get("/v1/admin$path") {bearerAuth(admin.accessToken)}.status)
+        database.transaction {it.update("UPDATE service_admins SET role='ADMIN' WHERE user_id=?",adminId)}
+        assertEquals(HttpStatusCode.OK,client.change(admin,path,body(emptyList())).status)
+        assertEquals(JsonArray(emptyList()),client.get("/v1/admin$path") {bearerAuth(admin.accessToken)}.body<JsonArray>())
+    }
     @Test fun `kubernetes operator settings require management role and reject command injection`()=withApp { client ->
         val admin=client.admin()
         val user=client.newUser("operator-user@example.com","operatoruser")
@@ -152,6 +180,7 @@ class AdminIntegrationTest:IntegrationTestBase() {
         assertTrue(frame.readText().contains("UNAUTHENTICATED"));denied.close()
     }
     @Test fun `home and web entry are public while account balance is private`()=withApp {client ->
+        assertTrue(client.get("/web/call.html").headers["Content-Security-Policy"]!!.contains("frame-ancestors 'self'"))
         for(path in listOf("/","/web/","/web/app.js","/web/style.css","/admin/")) {
             val r=client.get(path);assertEquals(HttpStatusCode.OK,r.status)
             assertTrue(r.headers["Content-Security-Policy"]!!.contains("frame-ancestors 'none'"))

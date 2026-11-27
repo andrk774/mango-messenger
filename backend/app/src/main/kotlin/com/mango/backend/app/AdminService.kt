@@ -33,12 +33,33 @@ internal fun ResultSet.stringOrNull(column: String): JsonElement = getString(col
 
 /** Only explicit service_admins grants, never conversation roles or email-based auto-promotion. */
 class AdminService(private val db: Database, private val config: AppConfig, private val time: TimeSource) {
-    private val cryptoKey = SecretKeySpec(MessageDigest.getInstance("SHA-256").digest(
-        ("mango-smtp-v1:" + (System.getenv("MANGO_ADMIN_ENCRYPTION_KEY")?.takeIf { it.isNotBlank() } ?: config.jwt.secret)).toByteArray()), "AES")
+    private val smtpCipher = SmtpCipher(
+        if (config.environment == AppConfig.Environment.TEST) ByteArray(32) { 42 }
+        else SmtpCipher.readKey(System.getenv("MANGO_SMTP_KEY_FILE")),
+        System.getenv("MANGO_ADMIN_ENCRYPTION_KEY")?.takeIf { it.isNotBlank() } ?: config.jwt.secret)
+
+    suspend fun migrateSmtpKey() {
+        if (!smtpCipher.canMigrate) return
+        db.transaction { c ->
+            c.queryOne("SELECT pg_advisory_xact_lock(71832156)") { true }
+            val rows = c.query("SELECT id,password_cipher FROM smtp_profiles WHERE password_cipher IS NOT NULL FOR UPDATE") {
+                it.uuid("id") to it.getString("password_cipher")
+            }
+            for ((id, old) in rows) {
+                val plain = smtpCipher.decrypt(old) // Verify even already migrated rows before startup.
+                if (!old.startsWith("v2:")) {
+                    val encrypted = smtpCipher.encrypt(plain)
+                    check(smtpCipher.decrypt(encrypted) == plain)
+                    c.update("INSERT INTO smtp_cipher_backup(profile_id,password_cipher) VALUES (?,?) ON CONFLICT DO NOTHING", id, old)
+                    c.update("UPDATE smtp_profiles SET password_cipher=? WHERE id=?", encrypted, id)
+                }
+            }
+        }
+    }
 
     fun requireAdmin(c: Connection, actor: UUID, permission: String = "manage"): String {
         val role=c.queryOne("SELECT role FROM service_admins WHERE user_id=?", actor) { it.getString(1) }
-        if (role == null || c.isBlocked(actor) || (permission=="manage" && role=="MODERATOR") || (permission=="owner" && role!="OWNER"))
+        if (role == null || c.isBlocked(actor) || !ServiceRoles.allows(role, permission))
             throw AppException.Forbidden("Требуются права администратора сервиса")
         return role
     }
@@ -48,7 +69,7 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
         c.queryOne("SELECT pg_advisory_xact_lock(71832155)") { true }
         requireAdmin(c,actor,"owner")
         val role=body.text("role",20); val reason=body.text("reason",1000)
-        if(role !in setOf("USER","OWNER","ADMIN","MODERATOR")) invalid("Неизвестная роль")
+        if(role != "USER" && role !in ServiceRoles.all) invalid("Неизвестная роль")
         lockUser(c,target)
         if(c.isBlocked(target)) invalid("Сначала разблокируйте пользователя")
         if(c.queryOne("SELECT email_verified FROM users WHERE id=?",target) {it.getBoolean(1)} != true) invalid("Email должен быть подтверждён")
@@ -62,7 +83,7 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
     private fun audit(c: Connection, actor: UUID, action: String, target: String, detail: String) {
         c.update("INSERT INTO admin_audit(actor_id,action,target,detail) VALUES (?,?,?,?)", actor, action, target, detail)
     }
-    suspend fun users(actor: UUID, search: String, offset: Int): JsonArray = db.readOnly { c ->
+    suspend fun users(actor: UUID, search: String, offset: Int, target:UUID?=null): JsonArray = db.readOnly { c ->
         requireAdmin(c, actor,"moderate")
         JsonArray(c.query("""SELECT u.id,u.email,u.username,u.display_name,u.email_verified,u.created_at,
           b.reason,COALESCE(a.points,0) points,a.subscription_until,
@@ -70,7 +91,8 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
           COALESCE((SELECT role FROM service_admins s WHERE s.user_id=u.id),'USER') service_role
           FROM users u LEFT JOIN user_blocks b ON b.user_id=u.id LEFT JOIN account_balances a ON a.user_id=u.id
           WHERE u.deleted_at IS NULL AND (strpos(lower(u.email::text),?)>0 OR strpos(lower(u.username::text),?)>0)
-          ORDER BY u.created_at DESC,u.id LIMIT 50 OFFSET ?""", search.lowercase().take(120), search.lowercase().take(120), offset) { r ->
+          AND (?::uuid IS NULL OR u.id=?::uuid)
+          ORDER BY u.created_at DESC,u.id LIMIT 50 OFFSET ?""", search.lowercase().take(120), search.lowercase().take(120), target, target, offset) { r ->
             buildJsonObject {
                 put("id", r.getString("id")); put("email", r.getString("email")); put("username", r.getString("username"))
                 put("name", r.getString("display_name")); put("verified", r.getBoolean("email_verified")); put("admin", r.getBoolean("admin"))
@@ -98,11 +120,20 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
         if (c.queryOne("SELECT id FROM users WHERE id=? AND deleted_at IS NULL FOR UPDATE", target) { true } != true)
             throw AppException.NotFound("Пользователь")
     }
+    private fun requireCredentialChange(c: Connection, actor: UUID, target: UUID) {
+        // Same lock as changeRole: target cannot be promoted between check and update.
+        c.queryOne("SELECT pg_advisory_xact_lock(71832155)") { true }
+        val actorRole = requireAdmin(c, actor)
+        lockUser(c, target)
+        val targetRole = c.queryOne("SELECT role FROM service_admins WHERE user_id=?", target) { it.getString(1) }
+        if (actor == target || targetRole == "OWNER" || (targetRole != null && actorRole != "OWNER"))
+            throw AppException.Forbidden("Privileged credentials require the account recovery flow")
+    }
     suspend fun editIdentity(actor:UUID,target:UUID,body:JsonObject)=db.transaction { c ->
         requireAdmin(c,actor)
         val name=body.text("name",64); val username=body.text("username",32); val reason=body.text("reason",1000)
         if(!username.matches(Regex("[A-Za-z0-9_]{3,32}"))) invalid("Username: 3–32 латинских букв, цифр или знаков подчёркивания")
-        lockUser(c,target)
+        requireCredentialChange(c,actor,target)
         if(c.queryOne("SELECT 1 FROM users WHERE username=? AND id<>? AND deleted_at IS NULL",username,target) { true } == true)
             throw AppException.Conflict("Username уже занят")
         c.update("UPDATE users SET display_name=?,username=?,updated_at=now() WHERE id=?",name,username,target)
@@ -118,7 +149,7 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
             com.mango.backend.auth.PasswordHasher(config.password).hash(chars)
         } } finally { chars.fill('\u0000') }
         db.transaction { c ->
-            requireAdmin(c,actor); lockUser(c,target)
+            requireCredentialChange(c,actor,target)
             c.update("UPDATE users SET password_hash=?,updated_at=now() WHERE id=?",hash,target)
             c.update("UPDATE sessions SET revoked_at=now(),revoked_reason='ADMIN_PASSWORD' WHERE user_id=?",target)
             c.update("UPDATE devices SET revoked_at=now(),push_token=NULL WHERE user_id=?",target)
@@ -194,6 +225,35 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
         requireAdmin(c,actor)
         kotlinx.serialization.json.Json.parseToJsonElement(c.queryOne("SELECT kubernetes_config FROM server_settings WHERE id=1") { it.getString(1) }!!).jsonObject
     }
+    suspend fun externalKubernetesProfiles(actor:UUID):JsonArray=db.readOnly { c ->
+        requireAdmin(c,actor)
+        kotlinx.serialization.json.Json.parseToJsonElement(c.queryOne("SELECT kubernetes_external_profiles FROM server_settings WHERE id=1") {it.getString(1)}!!).jsonArray
+    }
+    suspend fun saveExternalKubernetesProfiles(actor:UUID,body:JsonObject)=db.transaction { c ->
+        requireAdmin(c,actor)
+        if(body.keys!=setOf("profiles")) invalid("Допустим только список profiles; секреты не принимаются")
+        val profiles=body["profiles"] as? JsonArray ?: invalid("Нужен список profiles")
+        if(profiles.size>5) invalid("Не более пяти внешних кластеров")
+        val names=mutableSetOf<String>()
+        val clean=JsonArray(profiles.map { element ->
+            val profile=element as? JsonObject ?: invalid("Некорректный профиль")
+            if(profile.keys!=setOf("name","context","namespace","deployment","service","publicHost")) invalid("Некорректные поля профиля")
+            buildJsonObject {
+                for(key in listOf("name","context","namespace","deployment","service")) {
+                    val value=profile.text(key,63)
+                    val pattern=if(key in setOf("name","context")) "[A-Za-z0-9][A-Za-z0-9_.-]{0,62}" else "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+                    if(!value.matches(Regex(pattern))) invalid("Некорректное поле $key")
+                    if(key=="name"&&!names.add(value.lowercase())) invalid("Имена профилей должны различаться")
+                    put(key,value)
+                }
+                val host=(profile["publicHost"] as? JsonPrimitive)?.takeIf {it.isString}?.content ?: invalid("Некорректный publicHost")
+                if(host.isNotEmpty() && (host.length>253 || !host.contains('.') || host.split('.').any { !it.matches(Regex("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) })) invalid("Укажите доменное имя без протокола, пути и пароля")
+                put("publicHost",host)
+            }
+        })
+        c.update("UPDATE server_settings SET kubernetes_external_profiles=? WHERE id=1",clean.toString())
+        audit(c,actor,"KUBERNETES_EXTERNAL_PROFILES","server","profiles=${clean.size}")
+    }
     suspend fun saveKubernetesSettings(actor:UUID,body:JsonObject)=db.transaction { c ->
         requireAdmin(c,actor)
         val keys=setOf("context","namespace","deployment","service")
@@ -221,14 +281,31 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
         c.update("UPDATE server_settings SET server_name=?,registration_open=? WHERE id=1",name,enabled)
         audit(c,actor,"SETTINGS","server","name=$name; registration=$enabled")
     }
-    suspend fun auditLog(actor:UUID,offset:Int):JsonArray=db.readOnly { c ->
-        requireAdmin(c,actor)
-        JsonArray(c.query("SELECT * FROM admin_audit ORDER BY id DESC LIMIT 50 OFFSET ?",offset) { r -> buildJsonObject {
+    suspend fun archiveAudit(actor:UUID,body:JsonObject)=db.transaction { c ->
+        requireAdmin(c,actor,"auditArchive")
+        if(body["confirmation"]?.jsonPrimitive?.content!="ARCHIVE_AUDIT") invalid("Подтвердите очистку журнала")
+        c.queryOne("SELECT pg_advisory_xact_lock(71832162)"){true}
+        val count=c.update("UPDATE admin_audit SET archived_at=now() WHERE archived_at IS NULL")
+        audit(c,actor,"AUDIT_ARCHIVED","server","records=$count; original records retained")
+    }
+    suspend fun auditLog(actor:UUID,offset:Int,archived:Boolean=false):JsonArray=db.readOnly { c ->
+        requireAdmin(c,actor,"auditRead")
+        JsonArray(c.query("""SELECT a.*,actor.display_name actor_name,actor.username actor_username,actor.deleted_at actor_deleted,
+          target_user.id target_user_id,target_user.display_name target_name,target_user.username target_username
+          FROM admin_audit a LEFT JOIN users actor ON actor.id=a.actor_id
+          LEFT JOIN users target_user ON target_user.id::text=a.target AND target_user.deleted_at IS NULL
+          WHERE (a.archived_at IS NOT NULL)=? ORDER BY a.id DESC LIMIT 50 OFFSET ?""",archived,offset) { r -> buildJsonObject {
             put("id",r.getLong("id")); for(k in listOf("actor_id","action","target","detail","created_at")) put(k,r.getString(k))
+            put("actor",if(r.getString("actor_username")==null || r.getTimestamp("actor_deleted")!=null) JsonNull else buildJsonObject {
+                put("id",r.getString("actor_id"));put("name",r.getString("actor_name"));put("username",r.getString("actor_username"))
+            })
+            put("targetUser",if(r.getString("target_user_id")==null) JsonNull else buildJsonObject {
+                put("id",r.getString("target_user_id"));put("name",r.getString("target_name"));put("username",r.getString("target_username"))
+            })
         } })
     }
     suspend fun overview(actor:UUID):JsonObject {
-        authorize(actor,"moderate")
+        authorize(actor,"overview")
         return db.readOnly { c -> buildJsonObject {
             for(table in listOf("users","conversations","messages","tasks","user_blocks","user_reports"))
                 put(table,c.queryOne("SELECT count(*) FROM $table") { it.getLong(1) }!!)
@@ -288,13 +365,6 @@ class AdminService(private val db: Database, private val config: AppConfig, priv
             (selected?.let(::SmtpMailSender) ?: fallback).send(to,subject,body)
         }
     }
-    private fun encrypt(value:String):String {
-        val iv=ByteArray(12).also { SecureRandom().nextBytes(it) }
-        val cipher=Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE,cryptoKey,GCMParameterSpec(128,iv)) }
-        return Base64.getEncoder().encodeToString(iv+cipher.doFinal(value.toByteArray()))
-    }
-    private fun decrypt(value:String):String {
-        val data=Base64.getDecoder().decode(value)
-        return String(Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE,cryptoKey,GCMParameterSpec(128,data.copyOfRange(0,12))) }.doFinal(data.copyOfRange(12,data.size)),Charsets.UTF_8)
-    }
+    private fun encrypt(value:String):String = smtpCipher.encrypt(value)
+    private fun decrypt(value:String):String = smtpCipher.decrypt(value)
 }

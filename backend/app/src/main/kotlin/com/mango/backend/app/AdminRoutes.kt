@@ -34,9 +34,10 @@ fun Route.adminRoutes(service: AdminService) {
         }
         route("/v1/admin") {
             // Every service method rechecks the grant, including inside mutation transactions.
-            get("/me") { val role=service.authorize(callerIdentity().userId,"moderate"); call.respond(buildJsonObject { put("role",role) }) }
+            get("/me") { val role=service.authorize(callerIdentity().userId,"panel"); call.respond(buildJsonObject { put("role",role) }) }
             get("/overview") { call.respond(service.overview(callerIdentity().userId)) }
             get("/users") { call.respond(service.users(callerIdentity().userId,call.request.queryParameters["q"].orEmpty(),offset())) }
+            get("/users/{id}") { call.respond(service.users(callerIdentity().userId,"",0,target()).firstOrNull() ?: throw com.mango.backend.common.AppException.NotFound("Пользователь")) }
             post("/users/{id}/block") { service.block(callerIdentity().userId,target(),call.receive()); call.respond(ok) }
             post("/users/{id}/identity") { service.editIdentity(callerIdentity().userId,target(),call.receive()); call.respond(ok) }
             post("/users/{id}/role") { service.changeRole(callerIdentity().userId,target(),call.receive()); call.respond(ok) }
@@ -47,9 +48,12 @@ fun Route.adminRoutes(service: AdminService) {
             post("/reports/{id}") { service.resolve(callerIdentity().userId,target(),call.receive()); call.respond(ok) }
             get("/settings") { call.respond(service.settings(callerIdentity().userId)) }
             get("/kubernetes") { call.respond(service.kubernetesSettings(callerIdentity().userId)) }
+            get("/kubernetes/external") { call.respond(service.externalKubernetesProfiles(callerIdentity().userId)) }
+            post("/kubernetes/external") { service.saveExternalKubernetesProfiles(callerIdentity().userId,call.receive()); call.respond(ok) }
             post("/kubernetes") { service.saveKubernetesSettings(callerIdentity().userId,call.receive()); call.respond(ok) }
             post("/settings") { service.saveSettings(callerIdentity().userId,call.receive()); call.respond(ok) }
-            get("/audit") { call.respond(service.auditLog(callerIdentity().userId,offset())) }
+            get("/audit") { call.respond(service.auditLog(callerIdentity().userId,offset(),call.request.queryParameters["archived"]=="true")) }
+            post("/audit/archive") { service.archiveAudit(callerIdentity().userId,call.receive()); call.respond(ok) }
             get("/smtp-profiles") { call.respond(service.profiles(callerIdentity().userId)) }
             post("/smtp-profiles") { call.respond(buildJsonObject { put("id",service.saveProfile(callerIdentity().userId,call.receive())) }) }
             post("/smtp-profiles/{id}/test") { service.testProfile(callerIdentity().userId,target()); call.respond(ok) }
