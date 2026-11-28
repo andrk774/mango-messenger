@@ -42,6 +42,7 @@ RUN ./gradlew --no-daemon :app:installDist -x test
 
 # ─────────────────────────── этап выполнения ───────────────────────────
 FROM eclipse-temurin:21-jre-alpine AS runtime
+RUN apk add --no-cache postgresql17-client
 
 # Процесс не от root: компрометация приложения не должна давать
 # прав на запись в системные каталоги контейнера.
@@ -51,6 +52,7 @@ RUN addgroup -S mango && adduser -S mango -G mango
 # Docker наследует владельца каталога из образа. Без этого том
 # принадлежал бы root, и загрузка файлов падала бы с отказом в доступе.
 RUN mkdir -p /data/attachments && chown mango:mango /data/attachments
+RUN mkdir -p /data/backups && chown mango:mango /data/backups && chmod 700 /data/backups
 
 WORKDIR /opt/mango
 COPY --from=build --chown=mango:mango /src/app/build/install/app ./

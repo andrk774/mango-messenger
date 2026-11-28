@@ -61,13 +61,14 @@ internal suspend fun createStickerFile(context: Context, sticker: BuiltInSticker
 }
 
 @Composable
-internal fun StickerPicker(onSend: suspend (Uri) -> Boolean, onOwnPicture: () -> Unit, onDismiss: () -> Unit) {
+internal fun StickerPicker(onSend: suspend (Uri) -> Boolean, onOwnPicture: () -> Unit, onDismiss: () -> Unit, onCreate: (() -> Unit)? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var sending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(onDismissRequest = { if (!sending) onDismiss() }, title = { Text("Стикеры Mango") }, text = {
         Column {
+            onCreate?.let { create -> Button(enabled = !sending, onClick = create) { Text("\u0421\u043e\u0437\u0434\u0430\u0442\u044c") } }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (sending) LinearProgressIndicator()
             LazyVerticalGrid(GridCells.Fixed(2), modifier = Modifier.heightIn(max = 360.dp)) {

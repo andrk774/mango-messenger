@@ -22,6 +22,8 @@ fun Route.adminRoutes(service: AdminService) {
         Triple("/admin", "index.html", "text/html"), Triple("/admin/", "index.html", "text/html"),
         Triple("/admin/app.js", "app.js", "application/javascript"), Triple("/admin/style.css", "style.css", "text/css"),
         Triple("/admin/kubernetes.js", "kubernetes.js", "application/javascript"),
+        Triple("/admin/image-ai.js", "image-ai.js", "application/javascript"),
+        Triple("/admin/backups.js", "backups.js", "application/javascript"),
     )) get(path) {
         call.response.headers.append("Cache-Control","no-store")
         call.response.headers.append("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")

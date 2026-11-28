@@ -358,6 +358,8 @@ fun Application.mangoModule(
         adminRoutes(adminService)
         kubernetesApiRoutes(adminService)
         supportRoutes(database,adminService,rateLimiter)
+        imageGenerationRoutes(database,adminService)
+        backupRoutes(config.database,database,adminService)
         analyticsRoutes(database,adminService,callSettings)
         callSettingsRoutes(adminService,callSettings)
         webRoutes(database,rateLimiter,callSettings)

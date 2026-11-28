@@ -58,6 +58,18 @@ class MessageDaoTest {
     }
 
     @Test
+    fun `expanded local window includes oldest messages beyond 200`() = runTest {
+        for (seq in 1L..450L) {
+            messageDao.insertIgnore(Fixtures.message(id = "history-$seq", seq = seq))
+        }
+        assertEquals(251L, messageDao.observeRecent(Fixtures.CONVERSATION, 200).first().last().seq)
+        val expanded = messageDao.observeRecent(Fixtures.CONVERSATION, 500).first()
+        assertEquals(450, expanded.size)
+        assertEquals(1L, expanded.last().seq)
+        assertEquals(450, expanded.map { it.id }.distinct().size)
+    }
+
+    @Test
     fun `duplicate client message id is rejected by unique index`() = runTest {
         val first = Fixtures.message(id = "m1", clientMsgId = "op-1")
         val duplicate = Fixtures.message(id = "m2", clientMsgId = "op-1")

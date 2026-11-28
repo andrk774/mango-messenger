@@ -35,7 +35,13 @@ import javax.inject.Singleton
 @Serializable data class SupportOkDto(val ok:Boolean)
 @Serializable data class CallGrantDto(val url:String,val token:String,val room:String,val iceServers:List<CallIceServerDto> = emptyList(),val relayOnly:Boolean=false)
 
+@Serializable data class ImageAiStatus(val enabled:Boolean=false)
+@Serializable data class ImageAiRequest(val id:String,val prompt:String)
+@Serializable data class ImageAiResult(val image:String)
+
 interface AccountFeaturesApi {
+    @GET("v1/ai/images/status") suspend fun imageAiStatus():Response<ImageAiStatus>
+    @POST("v1/ai/images") suspend fun generateImage(@Body body:ImageAiRequest):Response<ImageAiResult>
     @GET("v1/stories") suspend fun stories(@Query("offset") offset:Int):Response<List<StoryDto>>
     @GET("v1/stories/{id}/image") suspend fun storyImage(@Path("id") id:String):Response<StoryImageDto>
     @POST("v1/stories") suspend fun publishStory(@Body body:StoryCreateDto):Response<Unit>
@@ -68,6 +74,8 @@ interface AccountFeaturesApi {
 }
 
 @Singleton class AccountFeaturesRemote @Inject constructor(private val api:AccountFeaturesApi) {
+    suspend fun imageAiStatus()=apiCall{api.imageAiStatus()}
+    suspend fun generateImage(id:String,prompt:String)=apiCall{api.generateImage(ImageAiRequest(id,prompt))}
     suspend fun stories(offset:Int=0)=apiCall{api.stories(offset)}
     suspend fun storyImage(id:String)=apiCall{api.storyImage(id)}
     suspend fun publishStory(id:String,image:String)=apiCall{api.publishStory(StoryCreateDto(id,image))}

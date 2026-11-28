@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -106,6 +110,10 @@ fun ConversationScreen(
     var showSearch by remember { mutableStateOf(false) }
     var showEmoji by remember { mutableStateOf(false) }
     var showStickers by remember { mutableStateOf(false) }
+    var showStudio by remember { mutableStateOf(false) }
+    var imageAiEnabled by remember { mutableStateOf(false) }
+    LaunchedEffect(showStickers) { if(showStickers) imageAiEnabled=viewModel.imageAiAvailable() }
+    if(showStudio) ImageStudio(viewModel::generateImage,viewModel::sendUncaptionedAttachment,onClose={showStudio=false;showStickers=true})
     if (showEmoji) EmojiPicker("Эмоджи", composerEmojis, onPick = {
         viewModel.onComposerChange(state.composerText + it)
     }, onDismiss = { showEmoji = false })
@@ -122,7 +130,7 @@ fun ConversationScreen(
     if (showStickers) StickerPicker(onSend = viewModel::sendUncaptionedAttachment, onOwnPicture = {
         showStickers = false
         pickSticker.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif"))
-    }, onDismiss = { showStickers = false })
+    }, onDismiss = { showStickers = false }, onCreate = if(imageAiEnabled) ({showStickers=false;showStudio=true}) else null)
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -154,8 +162,11 @@ fun ConversationScreen(
             total > 0 && last >= total - 5
         }
     }
-    LaunchedEffect(shouldLoadOlder) {
-        if (shouldLoadOlder) viewModel.loadOlder()
+    LaunchedEffect(shouldLoadOlder, state.messages.lastOrNull()?.id) {
+        if (shouldLoadOlder) {
+            snapshotFlow { state.isLoadingHistory }.first { !it }
+            viewModel.loadOlder()
+        }
     }
 
     Scaffold(
@@ -277,6 +288,7 @@ private fun MessageList(
     onTranscribe: suspend (String) -> String,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         state = listState,
@@ -284,51 +296,60 @@ private fun MessageList(
         // ставит свежие сообщения внизу экрана.
         reverseLayout = true,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            horizontal = 12.dp,
+            horizontal = 8.dp,
             vertical = 8.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        items(
+        itemsIndexed(
             items = messages,
             // Ключ — клиентский идентификатор, а не серверный: он не
             // меняется при подтверждении отправки, поэтому Compose
             // не пересоздаёт элемент и не теряет его состояние.
-            key = { it.clientMsgId.value },
-        ) { message ->
+            key = { _, message -> message.clientMsgId.value },
+        ) { index, message ->
             if (message.type == MessageType.SYSTEM) {
                 SystemLine(SystemEventFormatter.text(message.system))
-                return@items
+                return@itemsIndexed
             }
 
             val isOutgoing = currentUserId != null && message.senderId == currentUserId
 
+            val older = messages.getOrNull(index + 1)
+            val zone = java.time.ZoneId.systemDefault()
+            val startsDay = older == null || older.createdAt.atZone(zone).toLocalDate() != message.createdAt.atZone(zone).toLocalDate()
+            val grouped = !startsDay && older.senderId == message.senderId && older.type != MessageType.SYSTEM &&
+                java.time.Duration.between(older.createdAt, message.createdAt).seconds in 0..300
+            var actions by remember(message.clientMsgId) { mutableStateOf(false) }
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = if (isOutgoing) Alignment.End else Alignment.Start,
             ) {
-                if (!message.isDeleted) {
-                    message.attachments.filterNot { it.mimeType.startsWith("audio/") }.forEach { attachment ->
-                        if (attachment.isImage) {
-                            ImageAttachment(attachment, loadImage, onClick = { onOpenAttachment(attachment) })
-                        } else {
-                            FileAttachment(attachment, onClick = { onOpenAttachment(attachment) })
-                        }
-                        Spacer(Modifier.size(2.dp))
+                if (startsDay) {
+                    Surface(modifier = Modifier.align(Alignment.CenterHorizontally).padding(vertical = 8.dp),
+                        shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)) {
+                        Text(TimeFormatters.dateSeparator(message.createdAt), modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelLarge)
                     }
                 }
-
-                // Пузырь — для текста или подписи. Сообщение-картинка без
-                // подписи обходится без пустого пузыря, но время и статус
-                // доставки всё равно нужны — они показываются пузырём.
                 MessageBubble(
-                    mediaContent = {
+                    modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { actions = true }),
+                    isGroupedWithPrevious = grouped,
+                    mediaContent = if (message.attachments.isEmpty()) null else { {
+                        message.attachments.filterNot { it.mimeType.startsWith("audio/") }.forEach { attachment ->
+                            if (attachment.isImage) {
+                                ImageAttachment(attachment, loadImage, onClick = { onOpenAttachment(attachment) })
+                            } else {
+                                FileAttachment(attachment, onClick = { onOpenAttachment(attachment) })
+                            }
+                            Spacer(Modifier.size(3.dp))
+                        }
                         message.attachments.filter {it.mimeType.startsWith("audio/")}.forEach { attachment ->
                             VoicePlayback(attachment.id.value,load={loadImage(attachment)},durationMs=attachment.durationMs,
                                 transcribe=if(message.syncStatus==SyncStatus.SYNCED) ({onTranscribe(attachment.id.value)}) else null)
                             UploadState(attachment)
                         }
-                    },
+                    } },
                     text = message.text,
                     isOutgoing = isOutgoing,
                     timeLabel = TimeFormatters.messageTime(message.createdAt),
@@ -357,17 +378,17 @@ private fun MessageList(
                     if (showReactions) EmojiPicker("Реакция", reactionEmojis, onPick = {
                         onReaction(message, it); showReactions = false
                     }, onDismiss = { showReactions = false })
-                    Row {
-                        listOf("👍", "❤️", "😂").forEach { emoji ->
-                            androidx.compose.material3.TextButton(onClick = { onReaction(message, emoji) }) { Text(emoji) }
+                    androidx.compose.material3.DropdownMenu(expanded = actions, onDismissRequest = { actions = false }, shape = RoundedCornerShape(20.dp)) {
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("\u0420\u0435\u0430\u043a\u0446\u0438\u044f") }, onClick = { actions = false; showReactions = true })
+                        if (!message.text.isNullOrBlank()) {
+                            androidx.compose.material3.DropdownMenuItem(text = { Text("\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c") }, onClick = {
+                                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Message", message.text))
+                                actions = false
+                            })
                         }
-                        androidx.compose.material3.TextButton(onClick = { showReactions = true }) { Text("＋") }
-                        if(!isOutgoing) Box {
-                            var menu by remember { mutableStateOf(false) }
-                            androidx.compose.material3.TextButton(onClick={menu=true}) {Text("Ещё")}
-                            androidx.compose.material3.DropdownMenu(expanded=menu,onDismissRequest={menu=false}) {
-                                androidx.compose.material3.DropdownMenuItem(text={Text("Пожаловаться на пользователя")},onClick={menu=false;showReport=true})
-                            }
+                        if (!isOutgoing) {
+                            androidx.compose.material3.DropdownMenuItem(text = { Text("\u041f\u043e\u0436\u0430\u043b\u043e\u0432\u0430\u0442\u044c\u0441\u044f") }, onClick = { actions = false; showReport = true })
                         }
                     }
                 }
@@ -420,8 +441,7 @@ private fun ImageAttachment(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier
-            .widthIn(max = 260.dp)
-            .fillMaxWidth(0.75f)
+            .width(280.dp)
             .aspectRatio(ratio)
             .clip(MaterialTheme.shapes.large)
             .clickable(enabled = file != null, onClick = onClick),

@@ -99,7 +99,7 @@ object NetworkModule {
     ): OkHttpClient = base.newBuilder()
         .addInterceptor(authInterceptor)
         .addInterceptor { chain ->
-            val configured=if(chain.request().url.encodedPath.endsWith("/transcript")) chain.withReadTimeout(190,TimeUnit.SECONDS) else chain
+            val configured=if((chain.request().url.encodedPath.endsWith("/transcript") || chain.request().url.encodedPath.endsWith("/ai/images"))) chain.withReadTimeout(190,TimeUnit.SECONDS) else chain
             configured.proceed(chain.request())
         }
         .authenticator(tokenAuthenticator)

@@ -121,6 +121,7 @@ services:
     volumes:
       # Файлы вложений переживают пересоздание контейнера.
       - attachments:/data/attachments
+      - backups:/data/backups
       # Каталог, а не файл: при отсутствии файла Docker создал бы
       # на его месте пустой каталог, и сервер получил бы не ключ.
       - ../../secrets:/run/secrets/mango:ro
@@ -162,6 +163,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  backups:
   speechmodels:
   pgdata:
   redisdata:

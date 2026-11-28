@@ -13,7 +13,7 @@ import com.mango.core.datastore.ChatBackground
 internal fun chatBackgroundColor(value: ChatBackground): Color {
     val dark=MaterialTheme.colorScheme.background.red<0.5f
     return when(value) {
-        ChatBackground.DEFAULT -> MaterialTheme.colorScheme.background
+        ChatBackground.DEFAULT -> if(dark) Color(0xFF172B25) else Color(0xFFDCE9D5)
         ChatBackground.BLUE -> if(dark) Color(0xFF152B40) else Color(0xFFE5EFF9)
         ChatBackground.MINT -> if(dark) Color(0xFF18352F) else Color(0xFFE0F1E8)
         ChatBackground.LILAC -> if(dark) Color(0xFF30243E) else Color(0xFFEDE5F5)

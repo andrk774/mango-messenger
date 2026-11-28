@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -70,6 +71,11 @@ class ConversationViewModel @Inject constructor(
 ) : ViewModel() {
     val appearance = settingsStore.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.mango.core.datastore.UserSettings())
 
+    suspend fun imageAiAvailable():Boolean = (accountFeatures.imageAiStatus() as? Outcome.Success)?.value?.enabled == true
+    suspend fun generateImage(id:String,prompt:String):String = when(val result=accountFeatures.generateImage(id,prompt)) {
+        is Outcome.Success -> result.value.image
+        is Outcome.Failure -> throw IllegalStateException(result.error.toUserMessage())
+    }
     suspend fun reportUser(target:String,reason:String):String = when(val result=accountFeatures.report(target,reason)) {
         is Outcome.Success -> result.value.id
         is Outcome.Failure -> throw IllegalStateException(result.error.toUserMessage())
@@ -122,6 +128,9 @@ class ConversationViewModel @Inject constructor(
         }
     }
     private val isLoadingHistory = MutableStateFlow(false)
+    private val historyLimit = MutableStateFlow(200)
+    private var historyJob: kotlinx.coroutines.Job? = null
+    private var historyEnd = false
 
     private val _events = MutableSharedFlow<ConversationEvent>(
         extraBufferCapacity = 8,
@@ -131,7 +140,9 @@ class ConversationViewModel @Inject constructor(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<ConversationUiState> = combine(
-        messageRepository.observeRecentMessages(conversationId, limit = 200),
+        historyLimit.flatMapLatest { limit ->
+            messageRepository.observeRecentMessages(conversationId, limit)
+        },
         conversationRepository.observeConversation(conversationId),
         userRepository.observeCurrentUser(),
         composerText,
@@ -256,15 +267,23 @@ class ConversationViewModel @Inject constructor(
 
     /** Догрузка более ранних сообщений при прокрутке вверх. */
     fun loadOlder() {
+        if (historyJob?.isActive == true || historyEnd) return
         val oldest = uiState.value.messages.mapNotNull { it.seq }.minOrNull() ?: return
+        // Expand the Room subscription too: fetching older rows alone leaves
+        // them outside the fixed 200-row window. This also works offline.
+        historyLimit.value += 100
         loadHistory(beforeSeq = oldest)
     }
 
     private fun loadHistory(beforeSeq: Long? = null) {
-        viewModelScope.launch {
+        if (historyJob?.isActive == true) return
+        historyJob = viewModelScope.launch {
             isLoadingHistory.value = true
             try {
                 val result = messageRepository.loadHistory(conversationId, beforeSeq)
+                if (beforeSeq != null && result is Outcome.Success && result.value == 0) {
+                    historyEnd = true
+                }
                 if (result is Outcome.Failure) {
                     // Отсутствие сети не повод показывать ошибку: история
                     // уже есть локально, и экран остаётся рабочим.

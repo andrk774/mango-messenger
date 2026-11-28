@@ -77,7 +77,9 @@ class DefaultMessageRepository @Inject constructor(
             attachmentDao.observeForConversation(conversationId.value),
         ) { entities, me, attachments ->
             val currentUserId = me?.id.orEmpty()
-            val reactions = messageDao.reactionsFor(entities.map { it.id })
+            // Older Android SQLite versions limit the number of bind arguments.
+            val reactions = entities.map { it.id }.chunked(500)
+                .flatMap { messageDao.reactionsFor(it) }
                 .groupBy { it.messageId }
             val byMessage = attachments.groupBy { it.messageId }
             entities.map { entity ->

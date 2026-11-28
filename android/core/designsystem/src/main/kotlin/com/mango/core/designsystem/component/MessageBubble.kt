@@ -3,6 +3,8 @@ package com.mango.core.designsystem.component
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -63,6 +65,7 @@ fun MessageBubble(
     onReactionClick: ((String) -> Unit)? = null,
     mediaContent: (@Composable () -> Unit)? = null,
 ) {
+    val inlineMeta = !isDeleted && !text.isNullOrEmpty() && mediaContent == null && reactions.isEmpty()
     val semantic = MangoTheme.semanticColors
     val bubbleColor = if (isOutgoing) semantic.outgoingBubble else semantic.incomingBubble
     val contentColor = if (isOutgoing) semantic.onOutgoingBubble else semantic.onIncomingBubble
@@ -101,9 +104,10 @@ fun MessageBubble(
         Column(
             modifier = Modifier
                 .widthIn(max = 320.dp)
+                .width(IntrinsicSize.Max)
                 .clip(shape)
                 .background(bubbleColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
                 .semantics { contentDescription = accessibilityLabel },
         ) {
             if (senderName != null && !isOutgoing && !isGroupedWithPrevious) {
@@ -129,7 +133,15 @@ fun MessageBubble(
                     color = contentColor.copy(alpha = 0.6f),
                 )
             } else if (!text.isNullOrEmpty()) {
-                LinkedMessageText(text = text, color = contentColor)
+                if (inlineMeta) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                        LinkedMessageText(text = text, color = contentColor)
+                        MessageMetaRow(timeLabel, isEdited, isPinned, isOutgoing, deliveryStatus, contentColor,
+                            modifier = Modifier.align(Alignment.Bottom))
+                    }
+                } else {
+                    LinkedMessageText(text = text, color = contentColor)
+                }
             }
 
             if (reactions.isNotEmpty()) {
@@ -137,7 +149,8 @@ fun MessageBubble(
                 ReactionsRow(reactions, onReactionClick)
             }
 
-            Spacer(Modifier.height(4.dp))
+            if (!inlineMeta) {
+            Spacer(Modifier.height(2.dp))
             MessageMetaRow(
                 timeLabel = timeLabel,
                 isEdited = isEdited,
@@ -145,7 +158,9 @@ fun MessageBubble(
                 isOutgoing = isOutgoing,
                 deliveryStatus = deliveryStatus,
                 contentColor = contentColor,
+                modifier = Modifier.align(Alignment.End),
             )
+            }
         }
     }
 }
@@ -197,9 +212,10 @@ private fun MessageMetaRow(
     isOutgoing: Boolean,
     deliveryStatus: MessageDeliveryStatus,
     contentColor: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -288,7 +304,7 @@ private fun ReactionsRow(
     reactions: List<ReactionChipData>,
     onReactionClick: ((String) -> Unit)?,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         reactions.forEach { reaction ->
             val background = if (reaction.reactedByMe) {
                 MaterialTheme.colorScheme.primaryContainer
