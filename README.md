@@ -106,21 +106,97 @@ Android: Kotlin, Jetpack Compose, Material 3, Hilt, Room, DataStore, Retrofit/Ok
 Backend: Kotlin, Ktor, PostgreSQL, Redis, Flyway. Инфраструктура: Docker Compose, Caddy,
 локальный сервис распознавания речи. Точные версии находятся в Gradle version catalogs и Docker-файлах.
 
-Для разработки нужны JDK 21, Android SDK 36 с Build Tools 36.0.0 и Docker с Compose.
+Для сборки Android нужны JDK 21, Android SDK 37.1 с Build Tools 36.0.0
+(targetSdk остаётся 36). Версии закреплены в `android/gradle/libs.versions.toml`.
+Для запуска сервера достаточно Git и Docker с Compose v2: JDK внутри образа.
 Для команд ниже используется PowerShell. В Android Studio откройте каталог `android`.
+
+## Пошаговая подготовка
+
+### 1. Скачать исходники и проверить инструменты
+
+Установите Git и Docker Desktop, включите Linux containers / WSL 2 и запустите Docker Desktop.
+Откройте PowerShell в каталоге, где хотите хранить проект:
+
+```powershell
+git clone https://github.com/andrk774/mango-messenger.git
+Set-Location mango-messenger
+git status --short
+docker version
+docker compose version
+```
+
+| Команда | Что делает |
+|---|---|
+| `git clone` | Скачивает исходники и историю Git в новый каталог |
+| `Set-Location` | Переходит в корень проекта; последующие команды выполняются отсюда |
+| `git status --short` | Показывает локальные изменения; пустой вывод означает чистую рабочую копию |
+| `docker version` | Проверяет клиент и доступность Docker Engine; должны отображаться Client и Server |
+| `docker compose version` | Проверяет наличие Compose v2 |
+
+Если проект уже скачан, перейдите в существующий каталог вместо повторного `clone`.
+Если `docker` не найден, проверьте установку и PATH, затем откройте новый PowerShell.
+
+### 2. Подготовить конфигурацию и ключи
+
+Следующая команда копирует шаблон **только если `.env` ещё нет**:
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+notepad .env
+```
+
+В редакторе задайте уникальные `MANGO_JWT_SECRET` (не менее 32 символов) и
+`POSTGRES_PASSWORD`. Для генерации случайного значения без OpenSSL можно использовать:
+
+```powershell
+$secretBytes = New-Object byte[] 48
+$secretRng = [Security.Cryptography.RandomNumberGenerator]::Create()
+try { $secretRng.GetBytes($secretBytes) } finally { $secretRng.Dispose() }
+[Convert]::ToBase64String($secretBytes)
+```
+
+Команды создают 48 криптографически случайных байт и показывают строку Base64.
+Скопируйте результат в `.env`; не отправляйте его в чат или Git. Для пароля базы
+сгенерируйте другое значение. На существующей базе изменение `POSTGRES_PASSWORD`
+в `.env` само по себе **не меняет пароль PostgreSQL**.
+
+Создайте ключи защиты серверных настроек:
+
+```powershell
+if (-not (Test-Path secrets/smtp-encryption.key)) { .\scripts\initialize-smtp-key.ps1 }
+.\scripts\initialize-calls-key.ps1
+```
+
+Первый скрипт создаёт ключ шифрования SMTP и ограничивает права на файл в Windows.
+Второй создаёт ключ настроек звонков, также используемый интеграцией генератора изображений.
+Существующие ключи сохраняются. Не заменяйте их при обновлении: старые настройки
+должны оставаться расшифровываемыми. Храните защищённую копию вне ноутбука.
+
+| Переменная `.env` | Назначение / локальное значение |
+|---|---|
+| `MANGO_ENV` | `LOCAL` для локального стенда |
+| `MANGO_JWT_SECRET` | Подпись токенов авторизации; собственный секрет |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Имя базы, пользователь и пароль |
+| `BACKEND_PORT` | HTTP backend на компьютере, по умолчанию `8081` |
+| `POSTGRES_PORT`, `REDIS_PORT` | Локальные порты БД и Redis: `5433`, `6380` |
+| `MAILPIT_UI_PORT`, `MAILPIT_SMTP_PORT` | Просмотр тестовых писем `8026`, SMTP с компьютера `1026` |
+| `MANGO_DOMAIN` | Домен локального HTTPS, по умолчанию `mango.home.arpa` |
+| `LAN_HTTPS_PORT` | Порт Caddy для домашней сети, по умолчанию `443` |
+
+Переменные MinIO в шаблоне не означают, что MinIO запускается: текущий Compose
+хранит вложения в Docker volume `attachments`.
 
 ## Локальный запуск backend
 
 Из корня репозитория, при первой настройке:
 
 ```powershell
-Copy-Item .env.example .env
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml config --quiet
 ```
 
-Не перезаписывайте существующий `.env`. Укажите собственный случайный `MANGO_JWT_SECRET`
-и пароль базы. Значения в `.env.example` предназначены только для примера.
-При необходимости сгенерируйте секрет локально: `openssl rand -base64 48`.
-Секреты не добавляйте в Git.
+`config --quiet` проверяет Compose и подстановку переменных без печати конфигурации
+с секретами. При ошибке исправьте `.env` до запуска.
 
 ```powershell
 docker compose --env-file .env -f infrastructure/docker/docker-compose.yml up -d --build
@@ -130,6 +206,16 @@ Invoke-RestMethod http://127.0.0.1:8081/v1/health
 
 Миграции базы выполняются при запуске backend. Первая сборка требует интернета для зависимостей
 и образов; сервис речи также загружает модель.
+
+- `--env-file .env` явно указывает файл переменных из корня проекта.
+- `-f ...` выбирает Compose-файл.
+- `up -d --build` собирает образы, создаёт сеть и тома, запускает сервисы в фоне.
+- `ps` показывает состояние контейнеров и опубликованные порты. Дождитесь здорового backend.
+- `Invoke-RestMethod` запрашивает `/v1/health`: успешный ответ подтверждает доступность API,
+  но не заменяет проверку входа, push или звонков.
+
+Запускаются PostgreSQL, Redis, Mailpit, backend, сервис речи и Caddy.
+Веб-клиент и админ-панель раздаёт backend; отдельный frontend-сервер или `npm start` не нужен.
 
 | Адрес на компьютере | Назначение |
 |---|---|
@@ -143,19 +229,66 @@ Invoke-RestMethod http://127.0.0.1:8081/v1/health
 [экспорт сертификата](scripts/export-local-ca.sh).
 `localhost` на телефоне означает сам телефон. VPN может менять маршруты локальной сети.
 
+### Первый вход и назначение владельца
+
+1. Откройте `/web/`, зарегистрируйте аккаунт с собственным username и паролем.
+2. Откройте Mailpit по адресу из таблицы, найдите письмо подтверждения и подтвердите email.
+   Mailpit принимает письма только на стенде — в настоящий почтовый ящик они не уходят.
+3. Войдите в веб-клиент. Для управления сервером назначьте владельца из серверной консоли:
+
+```powershell
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml exec backend /opt/mango/bin/app --bootstrap-owner YOUR_USERNAME
+```
+
+Замените `YOUR_USERNAME` на username зарегистрированного пользователя, без `@`.
+Команда выдаёт роль `OWNER` подтверждённому, незаблокированному аккаунту и записывает
+действие в журнал. Другие владельцы сохраняются; повторное назначение тому же аккаунту
+не создаёт нового пользователя. Это привилегированная операция оператора сервера.
+После неё откройте `/admin/`; при необходимости обновите сеанс входа.
+
+### Galaxy через домашний Wi-Fi и HTTPS
+
+Backend на `8081` привязан к `127.0.0.1`: напрямую через LAN этот порт недоступен.
+Для телефона используется Caddy на `443`. Телефон и компьютер должны быть в одной сети;
+брандмауэр должен разрешать входящий TCP 443 для доверенной домашней сети.
+
+```powershell
+Get-NetIPConfiguration
+docker cp mango-caddy-1:/data/caddy/pki/authorities/local/root.crt secrets/mango-local-ca.crt
+```
+
+Первая команда показывает IPv4 активного сетевого адаптера. Вторая копирует **публичный**
+корневой сертификат запущенного Caddy для последующей Android-сборки.
+Не копируйте приватный ключ центра сертификации. Эквивалент для Bash —
+`bash scripts/export-local-ca.sh`.
+
+Соберите APK с `ServerUrl=https://mango.home.arpa/` и `ServerIp`, равным текущему LAN-IP
+компьютера (команда ниже). Сборка использует экспортированный сертификат.
+Для браузера дополнительно настройте разрешение домена в LAN-IP и доверие к этому CA
+на конкретном устройстве. Если домен изменён, проверьте настройки доверия Android.
+Обычный публичный HTTPS требует собственного домена и сертификата публичного CA:
+текущий Caddyfile использует `tls internal`, одной смены имени домена недостаточно.
+
 ## Android: сборка и проверки
 
 Для эмулятора debug по умолчанию использует `http://10.0.2.2:8081/`:
 
 ```powershell
-cd android
-.\gradlew.bat :app:assembleDebug
-.\gradlew.bat testDebugUnitTest lintDebug
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\android\gradlew.bat -p android :app:assembleDebug
+.\android\gradlew.bat -p android testDebugUnitTest lintDebug
 ```
 
 Адрес меняется параметрами Gradle `-Pmango.serverUrl=...` и, при необходимости,
 `-Pmango.serverIp=...`. Для release используйте HTTPS.
 APK находятся в `android/app/build/outputs/apk/`.
+
+`JAVA_HOME` выбирает JDK (проверьте, что установлен JDK 21); `ANDROID_HOME` задаёт путь
+к SDK. SDK Platform 37.1, Build Tools 36.0.0 и Platform Tools установите через SDK Manager.
+`assembleDebug` собирает debug APK, `testDebugUnitTest` запускает модульные тесты,
+`lintDebug` выполняет статический анализ. Gradle Wrapper скачивает закреплённую версию
+Gradle — устанавливать Gradle отдельно не требуется.
 
 Подписанная локальная release-сборка из корня репозитория:
 
@@ -166,6 +299,107 @@ APK находятся в `android/app/build/outputs/apk/`.
 Скрипт использует Windows DPAPI и при первом запуске создаёт ключ в `secrets/release`.
 Сохраните переносимую зашифрованную резервную копию ключа и храните пароль отдельно.
 Не заменяйте ключ уже распространяемого приложения: обновления должны сохранять подпись.
+
+Установка release APK на подключённый телефон:
+
+```powershell
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb devices
+& $adb install -r android/app/build/outputs/apk/release/app-release.apk
+```
+
+`devices` должен показать телефон со статусом `device`. При `unauthorized` подтвердите
+USB-отладку на разблокированном телефоне. `install -r` обновляет приложение с сохранением
+данных при совместимой подписи. При ошибке подписи используйте исходный ключ сборки;
+удаление приложения ради установки уничтожит его локальные данные.
+
+## Обслуживание и обновление сервера
+
+Все команды выполняются из корня проекта. Если стенд запускался с дополнительными
+Compose-файлами, добавляйте те же `-f` при обслуживании.
+
+```powershell
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml logs --tail 100 backend
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml logs -f backend
+```
+
+Первая команда показывает последние 100 строк backend, вторая следит за новыми строками.
+`Ctrl+C` завершает просмотр, сервер продолжает работать. Перед публикацией логов удаляйте
+персональные данные и токены.
+
+```powershell
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml stop
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml start
+```
+
+`stop` останавливает контейнеры, сохраняя данные, `start` запускает существующие контейнеры.
+Выполняйте их по необходимости, а не вместе как обязательный шаг установки.
+`restart backend` перезапускает процесс, но не применяет новый образ и изменения окружения.
+
+Обновление чистой рабочей копии после резервного копирования:
+
+```powershell
+git status --short
+git pull --ff-only
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml up -d --build
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml ps
+Invoke-RestMethod http://127.0.0.1:8081/v1/health
+```
+
+Если `git status` показывает изменения, сначала сохраните и согласуйте их; не выполняйте
+`reset --hard`. `pull --ff-only` получает обновления без автоматического merge-коммита.
+`up -d --build` пересобирает исходники и обновляет контейнеры; возможен короткий перерыв.
+Не используйте `down -v` для обновления: он удаляет тома с данными.
+
+## Резервная копия и проверка восстановления
+
+В панели владельца: **Настройки → Резервные копии**. Копия БД и проверка восстановления
+описаны в [DATABASE_BACKUPS.md](docs/DATABASE_BACKUPS.md).
+Проверка создаёт отдельную базу и не подменяет рабочую. Копии внутри Docker volume
+не защищают от потери диска — нужен перенос на отдельный носитель.
+
+Для копии БД вместе с вложениями из PowerShell (Docker должен быть доступен в PATH):
+
+```powershell
+.\scripts\backup-local.ps1
+.\scripts\verify-backup.ps1 -BackupDirectory 'C:\path\to\mango-messenger\artifacts\backups\YOUR_BACKUP'
+```
+
+`backup-local.ps1` создаёт дамп PostgreSQL, копирует вложения и записывает контрольные суммы
+в `artifacts/backups/<идентификатор>`. Подставьте фактически созданный каталог во вторую
+команду. `verify-backup.ps1` проверяет суммы и разворачивает дамп в отдельную тестовую БД;
+тестовая база остаётся для проверки. Для согласованной копии БД и файлов заранее прекратите
+запись пользователей на время копирования. Скрипты рассчитаны на стандартные имена
+контейнеров/БД; при изменённых настройках передайте их параметры.
+
+Отдельно сохраните `.env`, `secrets/` (включая ключи SMTP, звонков и подписи), конфигурацию
+развёртывания и данные локального CA в защищённом архиве. Дамп БД содержит настройки SMTP,
+но для чтения зашифрованных полей нужен прежний ключ. Эти файлы не публикуются в GitHub.
+Замена действующей БД требует отдельного плана остановки, восстановления и отката.
+
+## Если запуск не удался
+
+| Симптом | Что проверить |
+|---|---|
+| Нет связи с Docker Engine | Docker Desktop запущен, выбран Linux backend, WSL работает |
+| Compose требует JWT secret | `.env` создан и команда выполняется из корня с `--env-file .env` |
+| Порт занят | Освободите порт или измените соответствующую переменную `.env`, затем выполните `up -d` |
+| Backend `unhealthy` | `logs --tail 100 backend`, состояние PostgreSQL/Redis, пароль существующей БД |
+| Нет письма | Для LOCAL откройте Mailpit, проверьте логи backend; внешняя доставка требует рабочего SMTP |
+| Телефон не подключается | Wi-Fi, LAN-IP, DNS, порт 443, сертификат, правила VPN и брандмауэра |
+| Изменения сайта не видны | Пересоберите backend через `up -d --build`, обновите страницу без кеша |
+| APK не собирается | JDK, SDK 37.1, лицензии SDK и доступ к репозиториям зависимостей |
+
+## Дополнительные сервисы и внешний сервер
+
+Обычный запуск выше не требует Kubernetes. Настройка целевого кластера описана в
+[инструкции Kubernetes](infrastructure/kubernetes/README.md), подключение API —
+[KUBERNETES_API.md](docs/KUBERNETES_API.md). Не применяйте манифесты к случайному контексту.
+
+Звонки требуют отдельной настройки [LiveKit/TURN](docs/CALLS.md), генерация изображений —
+[провайдера ИИ](docs/IMAGE_AI.md), push — Firebase (ниже).
+Для внешнего размещения нужны сервер, домен, публичный HTTPS/WSS и рабочий SMTP.
+Локальные Mailpit и сертификат Caddy не заменяют эти сервисы.
 
 ## Backend: тесты
 
